@@ -9,6 +9,7 @@ from typing import Any
 
 from agent_autopsy.analysis.agent import AnalysisResult
 from agent_autopsy.schema import Trace
+from agent_autopsy.utils.atomic import atomic_write_json
 
 PROMPT_VERSION = "autopsy-llm-v1"
 
@@ -63,8 +64,4 @@ def save_cached(trace: Trace, model: str, result: AnalysisResult) -> None:
         "success": result.success,
         "error": result.error,
     }
-    # Atomic write: a crashed or concurrent writer must never leave a
-    # truncated cache file behind (loaders treat corrupt files as a miss).
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(payload, default=str, indent=2))
-    tmp_path.replace(path)
+    atomic_write_json(path, payload)
