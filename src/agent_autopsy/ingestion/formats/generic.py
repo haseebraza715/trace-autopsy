@@ -197,7 +197,7 @@ class GenericJSONParser(TraceParser):
         return EnvironmentInfo(
             agent_framework=framework,
             model=model,
-            tools_available=list(set(tools)),
+            tools_available=sorted(set(tools)),
             context_window_tokens=context_window_tokens,
         )
 

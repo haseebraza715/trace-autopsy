@@ -274,7 +274,7 @@ class LangChainParser(TraceParser):
         return EnvironmentInfo(
             agent_framework="langchain",
             model=model,
-            tools_available=list(set(tools_available)),
+            tools_available=sorted(set(tools_available)),
             context_window_tokens=context_window_tokens,
         )
 

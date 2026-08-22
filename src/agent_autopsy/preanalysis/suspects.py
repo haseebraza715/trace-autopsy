@@ -158,7 +158,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Missing exit condition in graph/router logic",
                     confidence=0.85 if len(loop_signals) > 0 else 0.0,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="code",
                     suggested_fixes=[
                         "Add max iteration limit to graph execution",
@@ -179,7 +179,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Missing or misconfigured retry policy",
                     confidence=0.75,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="ops",
                     suggested_fixes=[
                         "Add exponential backoff to tool calls",
@@ -200,7 +200,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Model calling non-existent tools (hallucination)",
                     confidence=0.90,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="prompt",
                     suggested_fixes=[
                         "Add stricter tool definitions in system prompt",
@@ -221,7 +221,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Unhandled error causing cascade failures",
                     confidence=0.80,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="code",
                     suggested_fixes=[
                         "Add try/except blocks around tool calls",
@@ -242,7 +242,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Context window overflow causing truncation or failure",
                     confidence=0.85,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="ops",
                     suggested_fixes=[
                         "Implement context summarization",
@@ -263,7 +263,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Tool or model returning empty/null responses",
                     confidence=0.65,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="tool",
                     suggested_fixes=[
                         "Add output validation on tool results",
@@ -284,7 +284,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Agent drifted away from the original objective",
                     confidence=0.70,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="prompt",
                     suggested_fixes=[
                         "Reinforce task objective and success criteria in system prompt",
@@ -305,7 +305,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Agent reused stale context instead of adapting to new tool outputs",
                     confidence=0.72,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="code",
                     suggested_fixes=[
                         "Invalidate cached assumptions when tool outputs change",
@@ -326,7 +326,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Excessive token spend on low-value reasoning turns",
                     confidence=0.68,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="ops",
                     suggested_fixes=[
                         "Add token budget and early-stop criteria",
@@ -347,7 +347,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Authentication or permission issues blocked tool execution",
                     confidence=0.85,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="ops",
                     suggested_fixes=[
                         "Validate credentials and scopes before execution",
@@ -368,7 +368,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="External dependency latency caused timeout-driven failures",
                     confidence=0.78,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="ops",
                     suggested_fixes=[
                         "Set per-tool timeout and retry budgets",
@@ -389,7 +389,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Repeated tool requests indicate missing memory or memoization",
                     confidence=0.67,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="code",
                     suggested_fixes=[
                         "Memoize tool outputs by tool name and normalized input",
@@ -410,7 +410,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Inter-agent handoff propagated invalid state or errors",
                     confidence=0.74,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="code",
                     suggested_fixes=[
                         "Add schema validation at agent handoff boundaries",
@@ -431,7 +431,7 @@ class RootCauseBuilder:
                 Hypothesis(
                     description="Tool input/output not matching expected schema",
                     confidence=0.70,
-                    supporting_events=list(set(all_events)),
+                    supporting_events=sorted(set(all_events)),
                     category="tool",
                     suggested_fixes=[
                         "Add schema validation before tool calls",
