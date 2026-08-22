@@ -314,11 +314,11 @@ def summary(
         trace = api.load_trace(trace_file)
     except (ParseError, SchemaValidationError, PluginError) as e:
         console.print(f"[red]Error parsing trace:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
     except Exception:
         logger.exception("Unexpected error parsing trace")
         console.print("[red]Error parsing trace (see logs for details).[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
 
     summary = api.trace_summary(trace)
     _print_trace_summary(summary)
@@ -361,11 +361,11 @@ def validate(
 
     except (ParseError, SchemaValidationError, PluginError) as e:
         console.print(f"[red]Invalid trace file:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
     except Exception:
         logger.exception("Unexpected error validating trace")
         console.print("[red]Invalid trace file (see logs for details).[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
 
 
 @app.command()
@@ -606,11 +606,11 @@ def fixes(
         trace = api.load_trace(trace_file)
     except (ParseError, SchemaValidationError, PluginError) as e:
         console.print(f"[red]Error parsing trace:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
     except Exception:
         logger.exception("Unexpected error parsing trace for fixes")
         console.print("[red]Error parsing trace (see logs for details).[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
 
     preanalysis = api.run_preanalysis(trace)
     suggestions = FixSuggestionGenerator(trace, preanalysis).to_dict()
@@ -641,11 +641,11 @@ def agent_flow(
         trace = api.load_trace(trace_file)
     except (ParseError, SchemaValidationError, PluginError) as e:
         console.print(f"[red]Error parsing trace:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
     except Exception:
         logger.exception("Unexpected error parsing trace for agent-flow")
         console.print("[red]Error parsing trace (see logs for details).[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
 
     agent_ids = trace.get_agent_ids()
     handoffs = trace.get_agent_handoffs()

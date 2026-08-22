@@ -109,11 +109,11 @@ class TestValidateCommand:
         assert proc.returncode == 0
         assert "Trace is valid" in proc.stdout
 
-    def test_validate_malformed_json_exits_1(self, tmp_path: Path) -> None:
+    def test_validate_malformed_json_exits_2(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.json"
         bad.write_text('{"run_id": ', encoding="utf-8")
         proc = _run("validate", str(bad))
-        assert proc.returncode == 1
+        assert proc.returncode == 2
         assert "Invalid" in proc.stdout or "Error" in proc.stdout
 
 
@@ -235,3 +235,25 @@ class TestAnalyzeExitContractOnCleanRunWithAuthLanguage:
 
         proc = _run("analyze", str(path), "--no-llm", "--no-embeddings", "-q")
         assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
+class TestParseErrorExitContract:
+    """Every trace-loading command exits 2 on parse failure, per the
+    documented contract: 0 clean, 1 findings, 2 tool/parse error."""
+
+    def _bad_file(self, tmp_path: Path) -> Path:
+        bad = tmp_path / "bad.json"
+        bad.write_text('{"run_id": ', encoding="utf-8")
+        return bad
+
+    def test_summary_parse_error_exits_2(self, tmp_path: Path) -> None:
+        proc = _run("summary", str(self._bad_file(tmp_path)))
+        assert proc.returncode == 2, proc.stdout
+
+    def test_fixes_parse_error_exits_2(self, tmp_path: Path) -> None:
+        proc = _run("fixes", str(self._bad_file(tmp_path)))
+        assert proc.returncode == 2, proc.stdout
+
+    def test_agent_flow_parse_error_exits_2(self, tmp_path: Path) -> None:
+        proc = _run("agent-flow", str(self._bad_file(tmp_path)))
+        assert proc.returncode == 2, proc.stdout
