@@ -224,7 +224,6 @@ class ReportGenerator:
             "medium": 8,
             "low": 3,
         }
-        severity_order = sorted(severity_penalties, key=severity_penalties.get, reverse=True)
 
         claimed: set[int] = set()
         signals = self.result.preanalysis.get("signals", [])
