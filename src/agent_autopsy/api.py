@@ -136,6 +136,7 @@ def stream_llm_analysis_text(
     model: str | None = None,
     verbose: bool = False,
     enable_tracing: bool | None = None,
+    use_cache: bool = True,
 ) -> Iterator[str]:
     """
     Stream LLM / graph output as text chunks for UIs (e.g. ``st.write_stream``).
@@ -143,6 +144,14 @@ def stream_llm_analysis_text(
     When the iterator completes, ``result_holder['result']`` contains the final
     :class:`AnalysisResult` (unless the outer caller interrupted before completion).
     """
+    if use_cache:
+        cfg = get_config()
+        cached = load_cached(trace, model or cfg.default_model)
+        if cached is not None and cached.success and cached.report:
+            result_holder["result"] = cached
+            yield cached.report
+            return
+
     from agent_autopsy.analysis.llm_agent import run_analysis_stream as _stream
 
     yield from _stream(

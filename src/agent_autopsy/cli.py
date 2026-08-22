@@ -215,6 +215,7 @@ def analyze(
                     result_holder,
                     model=model,
                     verbose=verbose,
+                    use_cache=not no_cache,
                 ):
                     sys.stdout.write(chunk)
                     sys.stdout.flush()
