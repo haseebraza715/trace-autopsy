@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 from agent_autopsy.analysis.agent import AnalysisResult, run_analysis_without_llm
 from agent_autopsy.analysis.llm_cache import load_cached, save_cached
+from agent_autopsy.errors import ParseError
 from agent_autopsy.ingestion import TraceNormalizer, parse_trace_file
 from agent_autopsy.ingestion.parser import parse_trace_data
 from agent_autopsy.output import ReportGenerator
@@ -71,13 +72,21 @@ def apply_embedding_defaults_for_trace(trace: Trace) -> None:
 def load_trace(path: str | Path) -> Trace:
     """Parse and normalize a trace from disk."""
     trace = parse_trace_file(path)
-    return TraceNormalizer.normalize(trace)
+    return _require_events(TraceNormalizer.normalize(trace))
 
 
 def load_trace_from_dict(data: dict[str, Any]) -> Trace:
     """Parse and normalize a trace from an already-loaded JSON object."""
     trace = parse_trace_data(data)
-    return TraceNormalizer.normalize(trace)
+    return _require_events(TraceNormalizer.normalize(trace))
+
+
+def _require_events(trace: Trace) -> Trace:
+    """Reject event-less traces: a run with no events cannot be analyzed,
+    and reporting it as a healthy empty run would read as a clean pass."""
+    if not trace.events:
+        raise ParseError(f"Trace contains no events ({trace.run_id}); nothing to analyze")
+    return trace
 
 
 def run_preanalysis(trace: Trace) -> PreAnalysisBundle:

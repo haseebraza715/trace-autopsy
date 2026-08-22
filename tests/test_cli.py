@@ -257,3 +257,20 @@ class TestParseErrorExitContract:
     def test_agent_flow_parse_error_exits_2(self, tmp_path: Path) -> None:
         proc = _run("agent-flow", str(self._bad_file(tmp_path)))
         assert proc.returncode == 2, proc.stdout
+
+
+class TestEmptyTraceContract:
+    def test_analyze_empty_trace_is_tool_error_not_clean(self, tmp_path: Path) -> None:
+        """A trace with zero events cannot prove a clean run; exiting 0
+        would let CI pass on garbage input."""
+        empty = tmp_path / "empty.json"
+        empty.write_text("{}", encoding="utf-8")
+        proc = _run("analyze", str(empty), "--no-llm", "--no-embeddings", "-q")
+        assert proc.returncode == 2, proc.stdout
+        assert "no events" in proc.stdout.lower()
+
+    def test_summary_empty_trace_exits_2(self, tmp_path: Path) -> None:
+        empty = tmp_path / "empty.json"
+        empty.write_text("{}", encoding="utf-8")
+        proc = _run("summary", str(empty))
+        assert proc.returncode == 2, proc.stdout
