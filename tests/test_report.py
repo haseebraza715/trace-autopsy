@@ -124,3 +124,47 @@ class TestReportDeduplication:
         md = gen.to_markdown()
         assert "**Likely cause" in md
         assert md.count("## Findings") == 0
+
+
+class TestHealthScoreOverlapDamping:
+    """Evidence cited by multiple signals must not stack penalties."""
+
+    def _gen(self, signals):
+        trace = _trace_with_events()
+        return ReportGenerator(
+            trace,
+            AnalysisResult(
+                report="",
+                success=True,
+                preanalysis={"signals": signals},
+                trace_summary=trace.calculate_stats().__dict__,
+            ),
+        )
+
+    def test_duplicate_evidence_does_not_stack_full_penalties(self):
+        same_event = [
+            {"type": "hallucinated_tool", "severity": "high", "events": [1]},
+            {"type": "contract_unknown_tool", "severity": "high", "events": [1]},
+        ]
+        # one high penalty, then coverage: 1 of 3 events -> int(20/3)=6
+        assert self._gen(same_event)._calculate_health_score() == 100 - 15 - 6
+
+    def test_distinct_events_still_stack(self):
+        distinct = [
+            {"type": "a", "severity": "high", "events": [1]},
+            {"type": "b", "severity": "medium", "events": [2]},
+        ]
+        # both stack, coverage: 2 of 3 events -> int(40/3)=13
+        assert self._gen(distinct)._calculate_health_score() == 100 - 15 - 8 - 13
+
+    def test_partial_overlap_pays_only_for_new_events(self):
+        partial = [
+            {"type": "cascade", "severity": "critical", "events": [0, 1, 2]},
+            {"type": "storm", "severity": "high", "events": [1, 2]},
+        ]
+        # critical claims all three; storm has no new events left. Coverage 3/3 -> 20.
+        assert self._gen(partial)._calculate_health_score() == 100 - 25 - 20
+
+    def test_eventless_signals_keep_full_weight(self):
+        signals = [{"type": "goal_drift", "severity": "medium", "events": []}]
+        assert self._gen(signals)._calculate_health_score() == 100 - 8 - 0

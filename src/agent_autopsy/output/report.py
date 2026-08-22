@@ -211,7 +211,12 @@ class ReportGenerator:
         return sorted(list(events))
 
     def _calculate_health_score(self) -> int:
-        """Compute 0-100 health score from deterministic signals."""
+        """Compute 0-100 health score from deterministic signals.
+
+        An event's failure evidence costs once: signals are applied
+        heaviest-first and only their not-yet-claimed events earn the full
+        weight, so one root cause reported by two detectors cannot stack.
+        """
         score = 100
         severity_penalties = {
             "critical": 25,
@@ -219,11 +224,26 @@ class ReportGenerator:
             "medium": 8,
             "low": 3,
         }
+        severity_order = sorted(severity_penalties, key=severity_penalties.get, reverse=True)
 
+        claimed: set[int] = set()
         signals = self.result.preanalysis.get("signals", [])
-        for signal in signals:
+        ordered = sorted(
+            signals,
+            key=lambda s: severity_penalties.get(str(s.get("severity", "low")).lower(), 5),
+            reverse=True,
+        )
+        for signal in ordered:
             severity = str(signal.get("severity", "low")).lower()
-            score -= severity_penalties.get(severity, 5)
+            weight = severity_penalties.get(severity, 5)
+            events = [int(e) for e in signal.get("events", [])]
+            if events:
+                new_events = sum(1 for e in events if e not in claimed)
+                penalty = weight * new_events / len(events)
+                claimed.update(events)
+            else:
+                penalty = float(weight)
+            score -= int(round(penalty))
 
         impacted_events = set(self._extract_evidence_events())
         total_events = max(1, len(self.trace.events))
