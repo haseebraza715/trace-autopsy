@@ -168,3 +168,22 @@ class TestHealthScoreOverlapDamping:
     def test_eventless_signals_keep_full_weight(self):
         signals = [{"type": "goal_drift", "severity": "medium", "events": []}]
         assert self._gen(signals)._calculate_health_score() == 100 - 8 - 0
+
+
+class TestJsonNarrativeParity:
+    def test_json_carries_the_detailed_narrative(self):
+        trace = _trace_with_events()
+        from agent_autopsy.preanalysis.suspects import RootCauseBuilder
+
+        bundle = RootCauseBuilder(trace).build()
+        gen = ReportGenerator(
+            trace,
+            AnalysisResult(
+                report=render_deterministic_markdown(trace, bundle),
+                success=True,
+                preanalysis=bundle.to_dict(),
+                trace_summary=trace.calculate_stats().__dict__,
+            ),
+        )
+        payload = gen.to_json()
+        assert payload["detailed_analysis"].startswith("# Autopsy Report")

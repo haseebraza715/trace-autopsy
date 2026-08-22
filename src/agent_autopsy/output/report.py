@@ -388,6 +388,9 @@ class ReportGenerator:
             "evidence_events": report.evidence_events,
             "trace_summary": report.trace_summary,
             "preanalysis": report.preanalysis,
+            # Markdown keeps the LLM narrative or deterministic findings
+            # detail; JSON consumers get the same content under this key.
+            "detailed_analysis": report.raw_report,
         }
 
     def render(self, format_name: str = "markdown") -> str | dict[str, Any]:
