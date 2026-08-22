@@ -245,7 +245,12 @@ class ReportGenerator:
             "",
             "## Summary",
             "",
-            f"- **Status:** {report.status}",
+        ]
+
+        if "**Status:**" not in report.summary:
+            lines.append(f"- **Status:** {report.status}")
+
+        lines.extend([
             f"- **Health Score:** {report.health_score}/100",
             f"- **Confidence:** {report.confidence:.0%}",
             "",
@@ -255,7 +260,7 @@ class ReportGenerator:
             "",
             "## Timeline",
             "",
-        ]
+        ])
 
         for item in report.timeline:
             lines.append(f"- {item}")
@@ -321,14 +326,31 @@ class ReportGenerator:
 
         # Full narrative: LLM synthesis and/or deterministic markdown from run_analysis_without_llm
         if report.raw_report:
-            section_title = (
-                "## Deterministic analysis (no LLM)"
-                if "deterministic" in report.raw_report.lower()
-                else "## Detailed analysis"
-            )
-            lines.extend(["---", "", section_title, "", report.raw_report])
+            if "# Autopsy Report (deterministic)" in report.raw_report:
+                # The synthesized sections above already cover the
+                # deterministic doc's Summary and Hypotheses; only its
+                # per-finding detail is unique.
+                lines.extend(["---", "", *self._extract_findings_section(report.raw_report)])
+            else:
+                section_title = (
+                    "## Deterministic analysis (no LLM)"
+                    if "deterministic" in report.raw_report.lower()
+                    else "## Detailed analysis"
+                )
+                lines.extend(["---", "", section_title, "", report.raw_report])
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _extract_findings_section(narrative: str) -> list[str]:
+        """Pull the Findings block out of the deterministic markdown."""
+        lines = narrative.splitlines()
+        try:
+            start = next(i for i, line in enumerate(lines) if line.strip() == "## Findings")
+        except StopIteration:
+            return []
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+        return [line for line in lines[start + 1 : end] if line.strip()]
 
     def to_json(self) -> dict[str, Any]:
         """Generate JSON report."""

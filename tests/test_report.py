@@ -4,6 +4,7 @@ from datetime import datetime
 
 from agent_autopsy.analysis.agent import AnalysisResult
 from agent_autopsy.output import ReportGenerator
+from agent_autopsy.output.deterministic_report import render_deterministic_markdown
 from agent_autopsy.schema import (
     EnvironmentInfo,
     EventType,
@@ -86,3 +87,40 @@ class TestReportGenerator:
 
         assert any("max_iterations" in item for item in report.fix_recommendations["code"])
         assert any("401/403" in item for item in report.fix_recommendations["ops"])
+
+
+class TestReportDeduplication:
+    """The synthesized report must not embed a second full report body."""
+
+    def _result_with_deterministic_narrative(self):
+        from agent_autopsy.preanalysis.suspects import RootCauseBuilder
+
+        trace = _trace_with_events()
+        bundle = RootCauseBuilder(trace).build()
+        result = AnalysisResult(
+            report=render_deterministic_markdown(trace, bundle),
+            success=True,
+            error=None,
+            preanalysis=bundle.to_dict(),
+            trace_summary=trace.calculate_stats().__dict__,
+        )
+        return ReportGenerator(trace, result)
+
+    def test_markdown_contains_single_h1(self):
+        gen = self._result_with_deterministic_narrative()
+        md = gen.to_markdown()
+        h1s = [line for line in md.splitlines() if line.startswith("# Autopsy Report")]
+        assert len(h1s) == 1, h1s
+
+    def test_status_line_appears_once(self):
+        gen = self._result_with_deterministic_narrative()
+        md = gen.to_markdown()
+        status_lines = [line for line in md.splitlines() if line.startswith("- **Status:**")]
+        assert len(status_lines) == 1, status_lines
+
+    def test_findings_detail_is_kept(self):
+        """Per-finding detail is the deterministic narrative's unique section."""
+        gen = self._result_with_deterministic_narrative()
+        md = gen.to_markdown()
+        assert "**Likely cause" in md
+        assert md.count("## Findings") == 0
