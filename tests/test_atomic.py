@@ -22,23 +22,25 @@ def test_failed_write_leaves_original_and_no_tmp(tmp_path: Path) -> None:
     atomic_write_json(target, {"version": 1})
 
     class Boom:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
         def write(self, *_):
             raise OSError("disk full")
 
     import agent_autopsy.utils.atomic as mod
 
-    def failing(fdopen):
-        fdopen.return_value = Boom()
-
+    real_fdopen = mod.os.fdopen
+    mod.os.fdopen = lambda *a, **k: Boom()
     try:
-        real_fdopen = mod.os.fdopen
-        mod.os.fdopen = lambda *a, **k: Boom()
-        try:
-            atomic_write_json(target, {"version": 2})
-        except OSError:
-            pass
-        else:
-            raise AssertionError("expected OSError to propagate")
+        atomic_write_json(target, {"version": 2})
+    except OSError:
+        pass
+    else:
+        raise AssertionError("expected OSError to propagate")
     finally:
         mod.os.fdopen = real_fdopen
 
