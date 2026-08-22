@@ -34,3 +34,20 @@ def test_create_server_stdio_builds_and_registers_tools():
 
     tools = asyncio.run(mcp.list_tools())
     assert len(tools) == 13
+
+
+def test_http_transports_refuse_to_start_without_token(monkeypatch):
+    monkeypatch.delenv("MCP_SSE_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="MCP_SSE_TOKEN"):
+        create_mcp_server("sse")
+    with pytest.raises(RuntimeError, match="MCP_SSE_TOKEN"):
+        create_mcp_server("streamable-http")
+
+
+def test_http_transport_starts_when_token_set(monkeypatch):
+    monkeypatch.setenv("MCP_SSE_TOKEN", "secret-token")
+    mcp = create_mcp_server("sse")
+    import asyncio
+
+    tools = asyncio.run(mcp.list_tools())
+    assert len(tools) == 13

@@ -47,7 +47,13 @@ def create_mcp_server(transport: str = "stdio") -> Any:
     auth_settings = None
     token_verifier = None
     secret = os.getenv("MCP_SSE_TOKEN", "").strip()
-    if transport in ("sse", "streamable-http") and secret:
+    if transport in ("sse", "streamable-http"):
+        if not secret:
+            raise RuntimeError(
+                "MCP_SSE_TOKEN must be set for the sse/streamable-http transports; "
+                "they expose analysis tools over HTTP. Use stdio for local use, "
+                "or set MCP_SSE_TOKEN to require bearer auth."
+            )
         # Minimal resource-server metadata so FastMCP can install bearer auth on HTTP transports.
         auth_settings = AuthSettings(
             issuer_url=AnyHttpUrl("http://127.0.0.1:9/"),
