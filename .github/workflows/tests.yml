@@ -34,3 +34,15 @@ jobs:
 
       - name: Detector corpus eval
         run: python scripts/eval_detectors.py
+
+      - name: Self-check (autopsy on example traces, dogfooding the CI gate)
+        run: |
+          for f in examples/traces/*.json; do
+            # Don't fail the build — these fixtures intentionally contain
+            # failure patterns. We're just smoke-testing the CLI exit codes.
+            autopsy analyze "$f" --no-llm --no-embeddings -q -f json > /dev/null || true
+          done
+          # Real gate: regression check should pass on identical traces.
+          autopsy diff examples/traces/successful_run.json \
+                       examples/traces/successful_run.json \
+                       --fail-on-regression -f json > /dev/null

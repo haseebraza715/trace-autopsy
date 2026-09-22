@@ -96,6 +96,11 @@ def analyze(
         "--no-cache",
         help="Bypass LLM response disk cache (only applies with LLM analysis)",
     ),
+    no_cost: bool = typer.Option(
+        False,
+        "--no-cost",
+        help="Hide the cost section in the report",
+    ),
     stream: bool = typer.Option(
         False,
         "--stream",
@@ -111,6 +116,24 @@ def analyze(
         "-f", "--format",
         help="Output format: text | markdown | json",
     ),
+    fail_on: Optional[str] = typer.Option(
+        None,
+        "--fail-on",
+        help="Comma-separated pattern names that should fail the run "
+             "(e.g. infinite_loop,token_waste,context_overflow). When set, "
+             "exits 0 unless one of these patterns is detected; overrides "
+             "the default 'fail on any finding' behavior.",
+    ),
+    code_root: Optional[Path] = typer.Option(
+        None,
+        "--code-root",
+        help="Path to the agent's source tree. When provided AND the trace "
+             "carries source-location metadata (e.g. OTel code.filepath), "
+             "fix artifacts include applyable unified diffs as <pattern>.patch.",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+    ),
 ):
     """
     Analyze an agent execution trace and generate an autopsy report.
@@ -118,6 +141,8 @@ def analyze(
     Example:
         autopsy analyze ./traces/run_001.json
         autopsy analyze ./traces/run_001.json -o report.md --artifacts ./patches/
+        autopsy analyze trace.json --fail-on infinite_loop,token_waste  # CI gate
+        autopsy analyze trace.json --artifacts ./patches/ --code-root ./agent  # diffs
     """
     config = get_config()
     prev_skip = config.skip_embeddings
@@ -194,7 +219,7 @@ def analyze(
                     "[yellow]Warning:[/yellow] No API key configured for the selected LLM provider. "
                     "Running without LLM."
                 )
-            result = api.run_deterministic_analysis(trace)
+            result = api.run_deterministic_analysis(trace, show_cost=not no_cost)
         elif stream:
             result_holder: dict = {}
             try:
@@ -206,11 +231,13 @@ def analyze(
                 ):
                     sys.stdout.write(chunk)
                     sys.stdout.flush()
-                result = result_holder.get("result") or api.run_deterministic_analysis(trace)
+                result = result_holder.get("result") or api.run_deterministic_analysis(
+                    trace, show_cost=not no_cost
+                )
             except Exception as e:
                 logger.exception("Streaming LLM analysis failed")
                 console.print(f"\n[yellow]Streaming failed:[/yellow] {e}")
-                result = api.run_deterministic_analysis(trace)
+                result = api.run_deterministic_analysis(trace, show_cost=not no_cost)
         else:
             with _progress_ctx() as progress:
                 if not quiet:
@@ -229,11 +256,11 @@ def analyze(
                     logger.exception("LLM analysis failed")
                     console.print(f"[yellow]LLM analysis failed:[/yellow] {e}")
                     console.print("Falling back to deterministic analysis...")
-                    result = api.run_deterministic_analysis(trace)
+                    result = api.run_deterministic_analysis(trace, show_cost=not no_cost)
                 if not quiet:
                     progress.update(task, description="Analysis complete")
 
-        report_generator = api.generate_report(trace, result)
+        report_generator = api.generate_report(trace, result, show_cost=not no_cost)
 
         if output:
             save_fmt = fmt if fmt in ("json", "markdown", "text") else "markdown"
@@ -253,16 +280,38 @@ def analyze(
         if artifacts:
             artifact_generator = ArtifactGenerator(trace, preanalysis)
             saved_artifacts = artifact_generator.save_all(artifacts)
+            saved_patches: list[Path] = []
+            if code_root is not None:
+                from src.output.fix_generator import FixSuggestionGenerator
+
+                saved_patches = FixSuggestionGenerator(
+                    trace, preanalysis, code_root=code_root
+                ).write_patches(artifacts)
             if not quiet:
                 console.print(f"\n[green]Artifacts saved to:[/green] {artifacts}")
                 for path in saved_artifacts:
                     console.print(f"  - {path.name}")
+                for path in saved_patches:
+                    console.print(f"  - {path.name} (unified diff)")
 
         if not quiet:
             console.print("\n")
             _print_result_summary(result, preanalysis)
 
-        if _trace_has_findings(trace, preanalysis):
+        if fail_on:
+            wanted = {p.strip().lower() for p in fail_on.split(",") if p.strip()}
+            matched = sorted({
+                getattr(s.type, "value", str(s.type)).lower()
+                for s in (preanalysis.signals or [])
+                if getattr(s.type, "value", str(s.type)).lower() in wanted
+            })
+            if matched:
+                exit_code = 1
+                if not quiet:
+                    console.print(
+                        f"\n[red]Fail-on gate triggered:[/red] {', '.join(matched)}"
+                    )
+        elif _trace_has_findings(trace, preanalysis):
             exit_code = 1
     finally:
         config.skip_embeddings = prev_skip
@@ -384,6 +433,11 @@ def compare_traces(
         "--format",
         help="text (human) or json (pipe to jq)",
     ),
+    fail_on_regression: bool = typer.Option(
+        False,
+        "--fail-on-regression",
+        help="Exit 1 when trace B has any pattern not present in trace A (CI gate).",
+    ),
 ):
     """Compare two traces: patterns, tool deltas, timing (alias: diff)."""
     try:
@@ -402,22 +456,26 @@ def compare_traces(
     if fmt == "json":
         sys.stdout.write(json.dumps(detail, indent=2, default=str))
         console.print()
-        return
+    else:
+        adv = detail["advanced"]
+        table = Table(title="Trace comparison")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="white")
+        table.add_row("Trace A", detail["run_id_a"])
+        table.add_row("Trace B", detail["run_id_b"])
+        table.add_row("Event IDs only in A", str(detail["event_ids_only_in_a"][:20]))
+        table.add_row("Event IDs only in B", str(detail["event_ids_only_in_b"][:20]))
+        table.add_row("Patterns only in A", ", ".join(detail["patterns_only_in_a"]) or "None")
+        table.add_row("Patterns only in B", ", ".join(detail["patterns_only_in_b"]) or "None")
+        table.add_row("New tool signatures", str(len(adv["new_tool_signatures"])))
+        table.add_row("Removed tool signatures", str(len(adv["removed_tool_signatures"])))
+        table.add_row("Tool arg/name diffs", str(len(detail["tool_call_arg_or_name_diffs"])))
+        console.print(table)
 
-    adv = detail["advanced"]
-    table = Table(title="Trace comparison")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="white")
-    table.add_row("Trace A", detail["run_id_a"])
-    table.add_row("Trace B", detail["run_id_b"])
-    table.add_row("Event IDs only in A", str(detail["event_ids_only_in_a"][:20]))
-    table.add_row("Event IDs only in B", str(detail["event_ids_only_in_b"][:20]))
-    table.add_row("Patterns only in A", ", ".join(detail["patterns_only_in_a"]) or "None")
-    table.add_row("Patterns only in B", ", ".join(detail["patterns_only_in_b"]) or "None")
-    table.add_row("New tool signatures", str(len(adv["new_tool_signatures"])))
-    table.add_row("Removed tool signatures", str(len(adv["removed_tool_signatures"])))
-    table.add_row("Tool arg/name diffs", str(len(detail["tool_call_arg_or_name_diffs"])))
-    console.print(table)
+    if fail_on_regression and detail["patterns_only_in_b"]:
+        regressions = ", ".join(detail["patterns_only_in_b"])
+        console.print(f"\n[red]Regression detected:[/red] new patterns in B: {regressions}")
+        raise typer.Exit(1)
 
 
 @app.command("watch")
@@ -490,8 +548,26 @@ def replay_trace(
     speed: float = typer.Option(1.0, "--speed", help="Delay divisor (2 = twice as fast)"),
     step: bool = typer.Option(False, "--step", help="Wait for Enter after each event"),
     until_regex: Optional[str] = typer.Option(None, "--until", help="Stop when event text matches regex"),
+    reproduce: bool = typer.Option(
+        False,
+        "--reproduce",
+        help="Re-issue every LLM call in the trace against the configured "
+             "provider, then report whether the original failure patterns recur.",
+    ),
+    reproduce_n: int = typer.Option(
+        1,
+        "--reproduce-n",
+        help="Number of reproduction runs (helps with non-deterministic agents). "
+             "Only used with --reproduce.",
+    ),
 ):
-    """Print trace events step-by-step like a debugger."""
+    """Print trace events step-by-step like a debugger.
+
+    With --reproduce, instead of stepping through events, re-issue every LLM call
+    against the configured provider and report whether the same failure patterns
+    still fire on the synthetic trace. Useful as a regression check after
+    applying a fix.
+    """
     import re as re_mod
 
     try:
@@ -499,6 +575,33 @@ def replay_trace(
     except (ParseError, SchemaValidationError, PluginError) as e:
         console.print(f"[red]Error parsing trace:[/red] {e}")
         raise typer.Exit(2)
+
+    if reproduce:
+        if not api.llm_credentials_configured():
+            console.print(
+                "[red]--reproduce needs an LLM provider configured. "
+                "Set OPENROUTER_API_KEY/OPENAI_API_KEY/ANTHROPIC_API_KEY or use Ollama.[/red]"
+            )
+            raise typer.Exit(2)
+        from src.advanced.reproduce import Reproducer
+
+        try:
+            result = Reproducer(trace).reproduce(n=max(1, reproduce_n))
+        except Exception as exc:
+            logger.exception("Reproduce failed")
+            console.print(f"[red]Reproduce failed:[/red] {exc}")
+            raise typer.Exit(1)
+        console.print(f"\n[bold]{result.summary_line()}[/bold]")
+        for outcome in result.per_event:
+            label = f"event {outcome.event_id} ({outcome.model or '?'})"
+            if outcome.errors:
+                console.print(f"  [red]{label}:[/red] {outcome.errors[-1]}")
+            else:
+                preview = (outcome.new_outputs[-1][:80] + "…") if outcome.new_outputs else "(no output)"
+                console.print(f"  {label}: {preview}")
+        # Exit non-zero if the failure persisted in every run (regression).
+        raise typer.Exit(0 if not result.persistent_patterns else 1)
+
     until_c = re_mod.compile(until_regex) if until_regex else None
     sp = max(0.01, speed)
     for ev in trace.events:
@@ -575,6 +678,19 @@ def monitor(
 @app.command()
 def fixes(
     trace_file: Path = typer.Argument(..., exists=True, readable=True, help="Trace file path"),
+    code_root: Optional[Path] = typer.Option(
+        None,
+        "--code-root",
+        help="Path to the agent's source tree. Enables generation of unified-diff "
+             "patches (.patch files) when source-location metadata is present in the trace.",
+        exists=True, file_okay=False, dir_okay=True,
+    ),
+    write_patches: Optional[Path] = typer.Option(
+        None,
+        "--write-patches",
+        help="Write generated unified diffs into this directory as <pattern>.patch.",
+        file_okay=False, dir_okay=True,
+    ),
 ):
     """Generate advanced fix suggestions for a trace."""
     try:
@@ -588,21 +704,42 @@ def fixes(
         raise typer.Exit(1)
 
     preanalysis = api.run_preanalysis(trace)
-    suggestions = FixSuggestionGenerator(trace, preanalysis).to_dict()
+    generator = FixSuggestionGenerator(trace, preanalysis, code_root=code_root)
+    suggestions = generator.to_dict()
     if not suggestions:
         console.print("No advanced fix suggestions generated.")
         return
 
     for idx, suggestion in enumerate(suggestions, 1):
-        console.print(Panel.fit(
+        body = (
             f"[bold]{suggestion['title']}[/bold]\n"
             f"Category: {suggestion['category']}\n"
             f"Events: {suggestion['event_ids']}\n\n"
             f"Rationale: {suggestion['rationale']}\n\n"
-            f"Patch snippet:\n{suggestion['patch_snippet']}",
-            title=f"Fix Suggestion {idx}",
-            border_style="blue",
-        ))
+            f"Patch snippet:\n{suggestion['patch_snippet']}"
+        )
+        if suggestion.get("source_locations"):
+            locs = ", ".join(
+                f"{loc['file_path']}:{loc.get('line_number') or '?'}"
+                for loc in suggestion["source_locations"]
+            )
+            body += f"\nSource locations: {locs}"
+        if suggestion.get("patch_diff"):
+            body += "\n\n[green]Unified diff available[/green] (use --write-patches to save)"
+        console.print(Panel.fit(body, title=f"Fix Suggestion {idx}", border_style="blue"))
+
+    if write_patches is not None:
+        written = generator.write_patches(write_patches)
+        if written:
+            console.print(f"\n[green]Wrote {len(written)} patch file(s) to {write_patches}:[/green]")
+            for p in written:
+                console.print(f"  - {p.name}")
+        else:
+            console.print(
+                "\n[yellow]No patches written.[/yellow] "
+                "Either no source-location metadata in the trace, or no patterns "
+                "with diff templates fired (currently: infinite_loop, retry_storm, hallucinated_tool)."
+            )
 
 
 @app.command("agent-flow")
@@ -728,6 +865,11 @@ def autopsy_run(
         "--no-embeddings",
         help="Do not load sentence-transformers for semantic drift (saves memory)",
     ),
+    no_cost: bool = typer.Option(
+        False,
+        "--no-cost",
+        help="Hide the cost section in the report",
+    ),
     verbose: bool = typer.Option(
         False,
         "-v", "--verbose",
@@ -819,7 +961,7 @@ def autopsy_run(
         ) as progress:
             if no_llm or not api.llm_credentials_configured(config):
                 task = progress.add_task("Running deterministic analysis...", total=None)
-                result = api.run_deterministic_analysis(trace)
+                result = api.run_deterministic_analysis(trace, show_cost=not no_cost)
             else:
                 task = progress.add_task("Running LLM analysis...", total=None)
                 try:
@@ -827,7 +969,7 @@ def autopsy_run(
                 except Exception as e:
                     logger.exception("LLM analysis failed in autopsy-run")
                     console.print(f"[yellow]LLM analysis failed, falling back to deterministic:[/yellow] {e}")
-                    result = api.run_deterministic_analysis(trace)
+                    result = api.run_deterministic_analysis(trace, show_cost=not no_cost)
 
             progress.update(task, description="Analysis complete")
 
@@ -846,7 +988,7 @@ def autopsy_run(
                 output = reports_dir / f"{trace_file.stem}.md"
 
             # Generate and save the report
-            report_gen = api.generate_report(trace, result)
+            report_gen = api.generate_report(trace, result, show_cost=not no_cost)
             output_format = "json" if output.suffix.lower() == ".json" else "markdown"
             output = report_gen.save(output, format=output_format)
 

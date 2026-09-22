@@ -1,0 +1,26 @@
+# Drop-in: gate merge requests on agent failure patterns.
+# Copy to .gitlab-ci.yml in your repo (or include from your existing config).
+
+stages:
+  - test
+
+agent-autopsy:
+  stage: test
+  image: python:3.11-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - traces/**/*.json
+  script:
+    - pip install --upgrade pip
+    - pip install agent-autopsy
+    # Block the MR if any of these patterns appear in the new traces.
+    # Drop --fail-on to fail on ANY detected pattern (stricter).
+    - |
+      for trace in traces/*.json; do
+        autopsy analyze "$trace" \
+          --no-llm --no-embeddings -q \
+          --fail-on infinite_loop,token_waste,context_overflow,hallucinated_tool
+      done
+    # Optional: regression gate against a baseline trace.
+    - autopsy diff traces/baseline.json traces/candidate.json --fail-on-regression

@@ -1,16 +1,57 @@
 """
 Advanced fix suggestion generation.
 
-Produces trace-tailored fix suggestions and patch snippets.
+Produces trace-tailored fix suggestions and (when source-location metadata is
+present in the trace and a code root is provided) applyable unified diffs.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from src.output.code_context import (
+    SourceLocation,
+    find_source_locations_for_events,
+    insert_lines_at,
+)
 from src.preanalysis import PreAnalysisBundle
 from src.schema import Trace
+
+
+# Per-pattern guard snippets used when building unified diffs.
+_LOOP_GUARD_SNIPPET = """\
+# agent-autopsy: loop guard
+state['_aa_iter'] = state.get('_aa_iter', 0) + 1
+if state['_aa_iter'] > MAX_ITERATIONS:
+    raise RuntimeError('agent-autopsy: max iterations exceeded')
+"""
+
+_RETRY_BACKOFF_SNIPPET = """\
+# agent-autopsy: bounded retry with backoff
+import time, random
+for _attempt in range(MAX_RETRIES):
+    try:
+        break
+    except Exception:
+        time.sleep((2 ** _attempt) + random.uniform(0, 0.5))
+else:
+    raise RuntimeError('agent-autopsy: retry budget exhausted')
+"""
+
+_TOOL_VALIDATOR_SNIPPET = """\
+# agent-autopsy: tool allow-list validator
+if tool_name not in ALLOWED_TOOLS:
+    raise ValueError(f'agent-autopsy: unknown tool {tool_name!r}; allowed: {sorted(ALLOWED_TOOLS)}')
+"""
+
+
+_PATTERN_PATCH_TEMPLATES: dict[str, str] = {
+    "infinite_loop": _LOOP_GUARD_SNIPPET,
+    "retry_storm": _RETRY_BACKOFF_SNIPPET,
+    "hallucinated_tool": _TOOL_VALIDATOR_SNIPPET,
+}
 
 
 @dataclass
@@ -22,14 +63,24 @@ class FixSuggestion:
     rationale: str
     patch_snippet: str
     event_ids: list[int]
+    source_locations: list[SourceLocation] = field(default_factory=list)
+    patch_diff: str | None = None  # populated when code_root is provided
+    pattern_type: str | None = None  # used to look up patch templates
 
 
 class FixSuggestionGenerator:
     """Generate actionable, trace-aware fix suggestions."""
 
-    def __init__(self, trace: Trace, preanalysis: PreAnalysisBundle):
+    def __init__(
+        self,
+        trace: Trace,
+        preanalysis: PreAnalysisBundle,
+        *,
+        code_root: Path | None = None,
+    ):
         self.trace = trace
         self.preanalysis = preanalysis
+        self.code_root = code_root
 
     def generate(self) -> list[FixSuggestion]:
         suggestions: list[FixSuggestion] = []
@@ -46,11 +97,21 @@ class FixSuggestionGenerator:
                         rationale="Identical tool calls repeated consecutively indicate missing termination criteria.",
                         patch_snippet=(
                             f"# candidate node: {node}\n"
-                            "state['iteration_count'] = state.get('iteration_count', 0) + 1\n"
-                            "if state['iteration_count'] > MAX_ITERATIONS:\n"
-                            "    raise RuntimeError('Loop guard triggered')\n"
+                            + _LOOP_GUARD_SNIPPET
                         ),
                         event_ids=signal.event_ids,
+                        pattern_type="infinite_loop",
+                    )
+                )
+            elif signal.type == "retry_storm":
+                suggestions.append(
+                    FixSuggestion(
+                        title="Add bounded retry with exponential backoff",
+                        category="ops",
+                        rationale="Many retries in a short window indicate missing backoff and retry budget.",
+                        patch_snippet=_RETRY_BACKOFF_SNIPPET,
+                        event_ids=signal.event_ids,
+                        pattern_type="retry_storm",
                     )
                 )
             elif signal.type == "hallucinated_tool":
@@ -66,6 +127,7 @@ class FixSuggestionGenerator:
                             "If required functionality is unavailable, ask for guidance instead of inventing tools.\n"
                         ),
                         event_ids=signal.event_ids,
+                        pattern_type="hallucinated_tool",
                     )
                 )
             elif signal.type == "error_cascade":
@@ -110,7 +172,37 @@ class FixSuggestionGenerator:
                 continue
             seen.add(key)
             deduped.append(suggestion)
+
+        # Enrich with source locations + (optionally) unified diffs.
+        for suggestion in deduped:
+            suggestion.source_locations = find_source_locations_for_events(
+                self.trace, suggestion.event_ids
+            )
+            if self.code_root is not None and suggestion.pattern_type in _PATTERN_PATCH_TEMPLATES:
+                suggestion.patch_diff = self._build_diff(suggestion)
+
         return deduped
+
+    def _build_diff(self, suggestion: FixSuggestion) -> str | None:
+        """
+        Build a unified diff for one suggestion. Returns None when no source
+        location resolves, when the pattern has no template, or when patch
+        construction otherwise can't proceed.
+        """
+        template = _PATTERN_PATCH_TEMPLATES.get(suggestion.pattern_type or "")
+        if template is None or self.code_root is None:
+            return None
+        for loc in suggestion.source_locations:
+            resolved = loc.resolve(self.code_root)
+            if resolved is None:
+                continue
+            line = loc.line_number or 1
+            try:
+                rel = str(resolved.relative_to(self.code_root))
+            except ValueError:
+                rel = resolved.name
+            return insert_lines_at(resolved, line, template, rel_path=rel)
+        return None
 
     def to_dict(self) -> list[dict[str, Any]]:
         """Serialize suggestions to dictionaries."""
@@ -121,9 +213,36 @@ class FixSuggestionGenerator:
                 "rationale": suggestion.rationale,
                 "patch_snippet": suggestion.patch_snippet,
                 "event_ids": suggestion.event_ids,
+                "source_locations": [
+                    {
+                        "file_path": loc.file_path,
+                        "line_number": loc.line_number,
+                        "function_name": loc.function_name,
+                    }
+                    for loc in suggestion.source_locations
+                ],
+                "patch_diff": suggestion.patch_diff,
+                "pattern_type": suggestion.pattern_type,
             }
             for suggestion in self.generate()
         ]
+
+    def write_patches(self, output_dir: Path) -> list[Path]:
+        """
+        Write unified-diff patches into `output_dir/<pattern>.patch`.
+
+        Only suggestions with a non-None `patch_diff` are written. Returns the
+        list of paths actually created.
+        """
+        output_dir.mkdir(parents=True, exist_ok=True)
+        written: list[Path] = []
+        for s in self.generate():
+            if not s.patch_diff or not s.pattern_type:
+                continue
+            path = output_dir / f"{s.pattern_type}.patch"
+            path.write_text(s.patch_diff)
+            written.append(path)
+        return written
 
     def _guess_loop_node(self, event_ids: list[int]) -> str:
         for event_id in event_ids:

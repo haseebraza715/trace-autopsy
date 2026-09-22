@@ -1,0 +1,37 @@
+# Drop-in: gate PRs on agent failure patterns.
+# Copy to .github/workflows/agent-autopsy.yml in your repo.
+
+name: agent-autopsy
+
+on:
+  pull_request:
+    paths:
+      - "traces/**.json"
+      - ".github/workflows/agent-autopsy.yml"
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install agent-autopsy
+        run: |
+          python -m pip install --upgrade pip
+          pip install agent-autopsy
+
+      # Block the PR if any of these patterns appear in the new traces.
+      # Drop --fail-on to fail on ANY detected pattern (stricter).
+      - name: Analyze traces
+        run: |
+          for trace in traces/*.json; do
+            autopsy analyze "$trace" \
+              --no-llm --no-embeddings -q \
+              --fail-on infinite_loop,token_waste,context_overflow,hallucinated_tool
+          done
+
+      # Optional: regression gate against a baseline trace stored in main.
+      - name: Regression check
+        run: |
+          autopsy diff traces/baseline.json traces/candidate.json \
+            --fail-on-regression

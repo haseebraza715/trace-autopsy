@@ -8,6 +8,11 @@ import json
 from typing import Any
 
 from src.preanalysis import PreAnalysisBundle
+from src.preanalysis.pricing import (
+    compute_trace_cost,
+    format_cost_section,
+    waste_event_ids_from_signals,
+)
 from src.schema import Trace, TraceEvent
 
 PATTERN_DESCRIPTIONS: dict[str, str] = {
@@ -84,7 +89,11 @@ def _evidence_block(trace: Trace, event_ids: list[int], lines: int = 5) -> str:
     return "\n\n".join(blocks)
 
 
-def render_deterministic_markdown(trace: Trace, preanalysis: PreAnalysisBundle) -> str:
+def render_deterministic_markdown(
+    trace: Trace,
+    preanalysis: PreAnalysisBundle,
+    show_cost: bool = True,
+) -> str:
     """Rich markdown report without any LLM."""
     lines: list[str] = [
         f"# Autopsy Report (deterministic): {trace.run_id}",
@@ -96,9 +105,14 @@ def render_deterministic_markdown(trace: Trace, preanalysis: PreAnalysisBundle) 
         "",
         preanalysis.summary,
         "",
-        "## Findings",
-        "",
     ]
+
+    if show_cost:
+        waste_ids = waste_event_ids_from_signals(preanalysis.signals or [])
+        cost = compute_trace_cost(trace, waste_event_ids=waste_ids)
+        lines.extend(format_cost_section(cost))
+
+    lines.extend(["## Findings", ""])
 
     if not preanalysis.signals:
         lines.extend(
@@ -166,7 +180,11 @@ def render_deterministic_markdown(trace: Trace, preanalysis: PreAnalysisBundle) 
     return "\n".join(lines)
 
 
-def render_deterministic_plain(trace: Trace, preanalysis: PreAnalysisBundle) -> str:
+def render_deterministic_plain(
+    trace: Trace,
+    preanalysis: PreAnalysisBundle,
+    show_cost: bool = True,
+) -> str:
     """Plain text for terminals and piping (no markdown headings emphasis)."""
-    md = render_deterministic_markdown(trace, preanalysis)
+    md = render_deterministic_markdown(trace, preanalysis, show_cost=show_cost)
     return md.replace("**", "").replace("# ", "").replace("### ", "").replace("## ", "")

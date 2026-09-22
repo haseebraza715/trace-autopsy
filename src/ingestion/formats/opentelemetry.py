@@ -334,11 +334,15 @@ class OpenTelemetryParser(TraceParser):
             if start_time and end_time:
                 latency_ms = (end_time - start_time).total_seconds() * 1000
 
-            # Extract input/output from attributes
-            input_data = None
-            output_data = None
-            token_count = None
-            name = span.get("name")
+            # Extract input/output from attributes. Prefer OTel GenAI semantic
+            # conventions (gen_ai.* and openinference llm.*) when present so that
+            # spans from different SDKs (raw OTel, OpenInference, traceloop)
+            # collapse to the same canonical event.
+            gen_ai_fields = self._extract_gen_ai_fields(attrs, event_type)
+            input_data = gen_ai_fields["input"]
+            output_data = gen_ai_fields["output"]
+            token_count = gen_ai_fields["token_count"]
+            name = gen_ai_fields["name"] or span.get("name")
 
             for key, value in attrs.items():
                 key_lower = key.lower()
@@ -418,10 +422,124 @@ class OpenTelemetryParser(TraceParser):
 
         return events
 
+    # OpenTelemetry GenAI semantic-convention attribute keys
+    # (https://opentelemetry.io/docs/specs/semconv/gen-ai/).
+    # Includes the OpenInference and traceloop dialects since both are widely
+    # used and converge on similar concepts.
+    _GENAI_MODEL_KEYS = (
+        "gen_ai.request.model",
+        "gen_ai.response.model",
+        "llm.model_name",        # OpenInference
+        "llm.request.model",
+        "ai.model.id",           # traceloop / openllmetry
+    )
+    _GENAI_TOOL_NAME_KEYS = (
+        "gen_ai.tool.name",
+        "tool.name",
+        "function.name",
+    )
+    _GENAI_INPUT_KEYS = (
+        "gen_ai.prompt",
+        "gen_ai.request.messages",
+        "llm.input_messages",    # OpenInference
+        "llm.prompts",
+        "ai.prompt",             # traceloop
+        "input.value",           # OpenInference
+    )
+    _GENAI_OUTPUT_KEYS = (
+        "gen_ai.completion",
+        "gen_ai.response.messages",
+        "llm.output_messages",   # OpenInference
+        "ai.completion",         # traceloop
+        "output.value",          # OpenInference
+    )
+    _GENAI_INPUT_TOKEN_KEYS = (
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.prompt_tokens",
+        "llm.token_count.prompt",  # OpenInference
+        "ai.prompt_tokens",        # traceloop
+    )
+    _GENAI_OUTPUT_TOKEN_KEYS = (
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.completion_tokens",
+        "llm.token_count.completion",  # OpenInference
+        "ai.completion_tokens",        # traceloop
+    )
+
+    def _first_present(self, attrs: dict[str, Any], keys: tuple[str, ...]) -> Any | None:
+        for k in keys:
+            if k in attrs and attrs[k] is not None:
+                return attrs[k]
+        return None
+
+    def _coerce_int(self, value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+    def _extract_gen_ai_fields(
+        self,
+        attrs: dict[str, Any],
+        event_type: EventType,
+    ) -> dict[str, Any]:
+        """
+        Extract canonical fields from OTel GenAI / OpenInference / traceloop
+        attributes. Returns a dict with keys: name, input, output, token_count.
+        Each field may be None when the attributes don't carry it.
+
+        Also injects normalized aliases into ``attrs`` so downstream code (the
+        pricing module, plugin parsers) can read input/output token splits via
+        a single key set without re-doing the dialect translation.
+        """
+        # Model / tool name
+        name: str | None = None
+        if event_type == EventType.LLM_CALL:
+            model = self._first_present(attrs, self._GENAI_MODEL_KEYS)
+            if model is not None:
+                name = str(model)
+        elif event_type == EventType.TOOL_CALL:
+            tool_name = self._first_present(attrs, self._GENAI_TOOL_NAME_KEYS)
+            if tool_name is not None:
+                name = str(tool_name)
+
+        # Input / output
+        input_data = self._first_present(attrs, self._GENAI_INPUT_KEYS)
+        output_data = self._first_present(attrs, self._GENAI_OUTPUT_KEYS)
+
+        # Tokens — prefer in/out split, fall back to single total.
+        in_tok = self._coerce_int(self._first_present(attrs, self._GENAI_INPUT_TOKEN_KEYS))
+        out_tok = self._coerce_int(self._first_present(attrs, self._GENAI_OUTPUT_TOKEN_KEYS))
+        token_count: int | None = None
+        if in_tok is not None or out_tok is not None:
+            token_count = (in_tok or 0) + (out_tok or 0)
+            # Normalize aliases so the pricing module finds them without dialect
+            # translation. Existing keys are not overwritten.
+            attrs.setdefault("input_tokens", in_tok if in_tok is not None else 0)
+            attrs.setdefault("output_tokens", out_tok if out_tok is not None else 0)
+
+        return {
+            "name": name,
+            "input": input_data,
+            "output": output_data,
+            "token_count": token_count,
+        }
+
     def _determine_span_type(self, span: dict, attrs: dict[str, Any] | None = None) -> EventType:
         """Determine event type from span."""
         name = str(span.get("name", "")).lower()
         attrs = attrs or self._flatten_attributes(span.get("attributes", []))
+
+        # OTel GenAI semantic convention: gen_ai.operation.name is the primary
+        # signal. Recognized values include chat, completion, embeddings,
+        # text_completion, generate_content, tool_use.
+        operation = str(attrs.get("gen_ai.operation.name", "")).lower()
+        if operation in {"chat", "completion", "text_completion", "generate_content", "embeddings"}:
+            return EventType.LLM_CALL
+        if operation in {"tool_use", "execute_tool"}:
+            return EventType.TOOL_CALL
 
         # Check span kind
         kind = span.get("kind")
@@ -451,20 +569,29 @@ class OpenTelemetryParser(TraceParser):
 
     def _extract_final_output(self, spans: list[dict]) -> str | dict | None:
         """Extract final output from spans."""
+
+        def is_output_attr(key: str) -> bool:
+            kl = key.lower()
+            # Skip token-count attrs whose key happens to contain "completion"
+            # (e.g. llm.token_count.completion in OpenInference, gen_ai.usage.completion_tokens).
+            if "token" in kl or "usage" in kl:
+                return False
+            return any(k in kl for k in ("output", "response", "result", "completion"))
+
         # Find the root span (no parent) with output
         for span in spans:
             if not span.get("parentSpanId"):
                 attrs = self._flatten_attributes(span.get("attributes", []))
                 for key, value in attrs.items():
-                    if any(k in key.lower() for k in ["output", "response", "result", "completion"]):
-                        return value
+                    if is_output_attr(key) and isinstance(value, (str, dict, list)):
+                        return value if not isinstance(value, list) else value
 
         # Try last span
         if spans:
             attrs = self._flatten_attributes(spans[-1].get("attributes", []))
             for key, value in attrs.items():
-                if any(k in key.lower() for k in ["output", "response", "completion"]):
-                    return value
+                if is_output_attr(key) and isinstance(value, (str, dict, list)):
+                    return value if not isinstance(value, list) else value
 
         return None
 

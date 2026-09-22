@@ -72,12 +72,15 @@ See:
 
 1. Add a value to `PatternType` in `src/preanalysis/patterns.py` and implement `detect_*` on `PatternDetector`, then append it from `detect_all()`.
 2. Wire human-readable lines in `src/output/deterministic_report.py` (`PATTERN_DESCRIPTIONS` and `LIKELY_CAUSE`).
-3. Add or extend an entry in `tests/fixtures/real_traces/_manifest.yaml` with `must_include` / `clean` expectations.
-4. Run `python scripts/eval_detectors.py` and `pytest tests/test_preanalysis.py`.
+3. **Add at least 5 corpus entries** to `tests/fixtures/real_traces/`: at least 3 positives (traces where the pattern should fire, listed in `_manifest.yaml` under `must_include`) and at least 2 negatives (clean traces or traces with similar-but-not-quite patterns). This lets the eval script measure recall *and* precision for your detector.
+4. Run `python scripts/eval_detectors.py` — your detector should appear in the table at the top of [docs/patterns.md](docs/patterns.md). Refresh that table with `python scripts/eval_detectors.py --markdown-out docs/_detector_metrics.md` and paste in the result.
+5. Run `pytest tests/test_preanalysis.py` to cover edge cases the corpus doesn't.
+
+PRs that add a detector without ≥5 corpus entries will be asked to add fixtures before review.
 
 ## Detector corpus
 
-Real traces for regression testing live under `tests/fixtures/real_traces/` with `_manifest.yaml`. CI runs `scripts/eval_detectors.py` after unit tests.
+Real traces for regression testing live under `tests/fixtures/real_traces/` with `_manifest.yaml`. CI runs `scripts/eval_detectors.py` after unit tests. Per-detector accuracy is published in [docs/patterns.md](docs/patterns.md#measured-accuracy) — regenerate the table with `--markdown-out` after adding corpus entries.
 
 ## Code of Conduct
 

@@ -113,11 +113,11 @@ class ReportQualityValidator:
         return " ".join(feedback)
 
 
-def run_analysis_without_llm(trace: Trace) -> AnalysisResult:
+def run_analysis_without_llm(trace: Trace, *, show_cost: bool = True) -> AnalysisResult:
     """Deterministic analysis: pattern detection + structured markdown report (no LLM)."""
     trace_summary = TraceNormalizer.get_summary(trace)
     preanalysis = RootCauseBuilder(trace).build()
-    report = render_deterministic_markdown(trace, preanalysis)
+    report = render_deterministic_markdown(trace, preanalysis, show_cost=show_cost)
     return AnalysisResult(
         report=report,
         trace_summary=trace_summary,

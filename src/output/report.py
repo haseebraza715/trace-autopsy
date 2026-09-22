@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from src.plugins import get_plugin_manager
+from src.preanalysis.pricing import (
+    CostBreakdown,
+    compute_trace_cost,
+    format_cost_section,
+    waste_event_ids_from_signals,
+)
 from src.schema import Trace
 from src.analysis.agent import AnalysisResult
 
@@ -41,6 +47,7 @@ class AutopsyReport:
     raw_report: str
     preanalysis: dict = field(default_factory=dict)
     trace_summary: dict = field(default_factory=dict)
+    cost: CostBreakdown | None = None
 
 
 class ReportGenerator:
@@ -50,9 +57,22 @@ class ReportGenerator:
     Supports multiple output formats (markdown, JSON).
     """
 
-    def __init__(self, trace: Trace, analysis_result: AnalysisResult):
+    def __init__(
+        self,
+        trace: Trace,
+        analysis_result: AnalysisResult,
+        show_cost: bool = True,
+    ):
         self.trace = trace
         self.result = analysis_result
+        self.show_cost = show_cost
+
+    def _compute_cost(self) -> CostBreakdown | None:
+        if not self.show_cost:
+            return None
+        signals = self.result.preanalysis.get("signals", []) or []
+        waste_ids = waste_event_ids_from_signals(signals)
+        return compute_trace_cost(self.trace, waste_event_ids=waste_ids)
 
     def generate(self) -> AutopsyReport:
         """Generate the autopsy report."""
@@ -70,6 +90,7 @@ class ReportGenerator:
             raw_report=self.result.report,
             preanalysis=self.result.preanalysis,
             trace_summary=self.result.trace_summary,
+            cost=self._compute_cost(),
         )
 
     def _extract_summary(self) -> str:
@@ -327,6 +348,11 @@ class ReportGenerator:
             "",
         ])
 
+        if report.cost is not None:
+            lines.append("---")
+            lines.append("")
+            lines.extend(format_cost_section(report.cost))
+
         # Full narrative: LLM synthesis and/or deterministic markdown from run_analysis_without_llm
         if report.raw_report:
             section_title = (
@@ -342,7 +368,7 @@ class ReportGenerator:
         """Generate JSON report."""
         report = self.generate()
 
-        return {
+        payload: dict[str, Any] = {
             "run_id": report.run_id,
             "status": report.status,
             "generated_at": report.generated_at.isoformat(),
@@ -356,6 +382,16 @@ class ReportGenerator:
             "trace_summary": report.trace_summary,
             "preanalysis": report.preanalysis,
         }
+        if report.cost is not None:
+            payload["cost"] = {
+                "total_usd": round(report.cost.total_usd, 6),
+                "waste_usd": round(report.cost.waste_usd, 6),
+                "waste_ratio": round(report.cost.waste_ratio, 4),
+                "priced_events": report.cost.priced_events,
+                "unpriced_events": report.cost.unpriced_events,
+                "by_model": {k: round(v, 6) for k, v in report.cost.by_model.items()},
+            }
+        return payload
 
     def render(self, format_name: str = "markdown") -> str | dict[str, Any]:
         """

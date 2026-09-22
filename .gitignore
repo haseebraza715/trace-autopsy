@@ -42,8 +42,5 @@ htmlcov/
 # Logs
 *.log
 
-# Local agent instructions
-AGENT.MD
-
 # Trace capture default (TRACE_DIR=./traces) — keep local runs out of git
 /traces/*.json

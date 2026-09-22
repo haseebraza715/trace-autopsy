@@ -90,9 +90,14 @@ def detect_patterns(trace: Trace) -> list[PatternResult]:
     return PatternDetector(trace).detect_all()
 
 
-def generate_report(trace: Trace, analysis: AnalysisResult) -> ReportGenerator:
+def generate_report(
+    trace: Trace,
+    analysis: AnalysisResult,
+    *,
+    show_cost: bool = True,
+) -> ReportGenerator:
     """Build a report generator for markdown/JSON rendering."""
-    return ReportGenerator(trace, analysis)
+    return ReportGenerator(trace, analysis, show_cost=show_cost)
 
 
 def run_llm_analysis(
@@ -145,9 +150,9 @@ def stream_llm_analysis_text(
     )
 
 
-def run_deterministic_analysis(trace: Trace) -> AnalysisResult:
+def run_deterministic_analysis(trace: Trace, *, show_cost: bool = True) -> AnalysisResult:
     """Pre-analysis-only report without an LLM."""
-    return run_analysis_without_llm(trace)
+    return run_analysis_without_llm(trace, show_cost=show_cost)
 
 
 def analyze(
