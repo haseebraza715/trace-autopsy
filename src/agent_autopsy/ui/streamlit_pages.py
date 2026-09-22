@@ -14,6 +14,7 @@ import streamlit as st
 
 from agent_autopsy import api
 from agent_autopsy.errors import ParseError, PluginError, SchemaValidationError
+from agent_autopsy.ui import theme
 from agent_autopsy.utils.config import get_config
 
 # Logging setup
@@ -35,6 +36,7 @@ def configure_page(*, page_title: str = "Agent Autopsy") -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    theme.inject_global_styles()
 
 
 def init_session_state():
@@ -116,41 +118,75 @@ def save_to_reports_index(report_info: dict):
         json.dump(reports, f, indent=2, default=str)
 
 
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
+
+def _render_sidebar_brand() -> None:
+    st.markdown(
+        """
+        <div class="sidebar-brand">
+          <span class="sidebar-brand-mark">AA</span>
+          <div>
+            <div class="sidebar-brand-name">Agent Autopsy</div>
+            <div class="sidebar-brand-sub">Trace diagnosis</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_llm_status_card() -> None:
+    config = get_config()
+    if api.llm_credentials_configured(config):
+        badge = theme.status_badge("success", "Configured")
+        body = f"<b style='color:var(--aa-text)'>LLM</b> provider <code style='color:var(--aa-muted);font-family:var(--aa-mono);font-size:11px'>{config.llm_provider}</code> ready."
+    else:
+        badge = theme.status_badge("warning", "Not configured")
+        body = "<b style='color:var(--aa-text)'>LLM</b> disabled for current provider. Set API keys in <code style='color:var(--aa-muted);font-family:var(--aa-mono);font-size:11px'>.env</code> (see Settings)."
+    st.markdown(
+        f"""
+        <div class="aa-card" style="padding:.85rem .9rem;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem;">
+            <span class="aa-sidebar-title">LLM status</span>{badge}
+          </div>
+          <div style="color:var(--aa-muted);font-size:12px;line-height:1.5;">{body}</div>
+        </div>
+        <style>
+        .aa-sidebar-title {{ color: var(--aa-dim); font: 600 9px var(--aa-mono); letter-spacing: .1em; text-transform: uppercase; }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_sidebar():
     """Render the sidebar navigation and settings."""
     with st.sidebar:
-        st.title("🔍 Agent Autopsy")
-        st.markdown("---")
+        _render_sidebar_brand()
 
-        st.subheader("Pages")
-        st.page_link("pages/demo.py", label="Demo", icon=":material/troubleshoot:")
+        st.markdown('<div class="sidebar-heading">Navigation</div>', unsafe_allow_html=True)
         st.page_link("app.py", label="Home", icon="🏠")
+        st.page_link("pages/demo.py", label="Demo", icon=":material/troubleshoot:")
         st.page_link("pages/02_Analyze_Trace.py", label="Analyze Trace", icon="📊")
         st.page_link("pages/03_Trace_Viewer.py", label="Trace Viewer", icon="👁️")
         st.page_link("pages/04_Batch_Analysis.py", label="Batch Analysis", icon="📁")
         st.page_link("pages/05_Reports.py", label="Reports", icon="📝")
         st.page_link("pages/06_Settings.py", label="Settings", icon="⚙️")
 
-        st.markdown("---")
-
-        # API Key Status
-        config = get_config()
-        if api.llm_credentials_configured(config):
-            st.success(f"LLM: Configured for provider {config.llm_provider}")
-        else:
-            st.warning("LLM: Not configured for current provider")
-            st.caption("Set API keys in .env (see Settings)")
-
-        st.markdown("---")
+        st.markdown('<div class="sidebar-heading">System</div>', unsafe_allow_html=True)
+        _render_llm_status_card()
 
         # Quick stats if trace is loaded
         if st.session_state.trace:
-            st.subheader("Loaded Trace")
             trace = st.session_state.trace
-            st.text(f"Run ID: {trace.run_id[:20]}...")
-            st.text(f"Events: {len(trace.events)}")
-            st.text(f"Status: {trace.status.value}")
-
+            st.markdown('<div class="sidebar-heading">Session</div>', unsafe_allow_html=True)
+            theme.render_trace_summary_card(
+                run_id=trace.run_id,
+                status=trace.status.value,
+                events=len(trace.events),
+            )
             if st.button("Clear Trace", width='stretch'):
                 st.session_state.trace = None
                 st.session_state.preanalysis = None
@@ -160,106 +196,221 @@ def render_sidebar():
                 st.rerun()
 
 
+# ---------------------------------------------------------------------------
+# Home
+# ---------------------------------------------------------------------------
+
+def _render_home_actions() -> None:
+    actions = [
+        {
+            "icon": "▶",
+            "title": "Analyze a trace",
+            "body": "Upload a single trace JSON and reconstruct exactly where the run failed.",
+            "page": "pages/02_Analyze_Trace.py",
+            "key": "home_analyze",
+            "tone": "accent",
+        },
+        {
+            "icon": "▥",
+            "title": "Batch analysis",
+            "body": "Run the deterministic pipeline across every trace in a directory at once.",
+            "page": "pages/04_Batch_Analysis.py",
+            "key": "home_batch",
+        },
+        {
+            "icon": "▤",
+            "title": "Browse reports",
+            "body": "Open previously generated Markdown and JSON reports from disk.",
+            "page": "pages/05_Reports.py",
+            "key": "home_reports",
+        },
+    ]
+    cols = st.columns(3, gap="medium")
+    for col, action in zip(cols, actions):
+        with col:
+            tone = action.get("tone")
+            tone_style = (
+                "border-color:rgba(230,170,74,.4);"
+                if tone == "accent"
+                else ""
+            )
+            st.markdown(
+                f"""
+                <div class="aa-card aa-action-card" style="{tone_style}">
+                  <div class="aa-action-icon">{action['icon']}</div>
+                  <div class="aa-action-title">{action['title']}</div>
+                  <div class="aa-action-body">{action['body']}</div>
+                </div>
+                <style>
+                .aa-action-card {{ min-height: 168px; display: flex; flex-direction: column; gap: .4rem; }}
+                .aa-action-icon {{
+                  width: 36px; height: 36px; display: grid; place-items: center;
+                  border: 1px solid var(--aa-border); background: var(--aa-surface-2);
+                  border-radius: 8px; color: var(--aa-accent); font-size: 15px; margin-bottom: .4rem;
+                }}
+                .aa-action-title {{ color: var(--aa-text); font-size: 15px; font-weight: 620; letter-spacing: -.01em; }}
+                .aa-action-body {{ color: var(--aa-muted); font-size: 12.5px; line-height: 1.55; flex: 1; }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.button("Open", key=action["key"], width='stretch')
+            if st.session_state.get(action["key"]):
+                st.switch_page(action["page"])
+
+
+def _render_recent_files() -> None:
+    theme.render_section_header("History", "Recent traces")
+    traces_dir = Path("traces")
+    if not traces_dir.exists() or not list(traces_dir.glob("*.json")):
+        theme.render_empty_state(
+            "file",
+            "No traces found",
+            "Drop trace JSON files into ./traces/ and they will appear here for one-click analysis.",
+        )
+        return
+
+    trace_files = sorted(traces_dir.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)[:5]
+    for idx, trace_file in enumerate(trace_files):
+        mtime = datetime.fromtimestamp(trace_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        c1, c2, c3 = st.columns([5, 2, 1.2])
+        with c1:
+            st.markdown(
+                f'<div style="color:var(--aa-text);font-size:13px;font-weight:550;font-family:var(--aa-mono);">'
+                f"{trace_file.name}</div>",
+                unsafe_allow_html=True,
+            )
+        with c2:
+            st.markdown(
+                f'<div style="color:var(--aa-dim);font-size:12px;text-align:right;">{mtime}</div>',
+                unsafe_allow_html=True,
+            )
+        with c3:
+            if st.button("Analyze", key=f"quick_{idx}_{trace_file.name}", width='stretch'):
+                try:
+                    st.session_state.trace = api.load_trace(trace_file)
+                    st.switch_page("pages/02_Analyze_Trace.py")
+                except (ParseError, SchemaValidationError, PluginError) as e:
+                    st.error(f"Error loading trace: {e}")
+                except Exception:
+                    logger.exception("Failed loading recent trace file: %s", trace_file)
+                    st.error("Error loading trace (see logs for details).")
+        if idx < len(trace_files) - 1:
+            st.markdown(
+                '<div style="height:1px;background:var(--aa-border-soft);margin:.55rem 0;"></div>',
+                unsafe_allow_html=True,
+            )
+
+
+def _render_recent_reports() -> None:
+    theme.render_section_header("History", "Recent reports")
+    reports = load_reports_index()[:5]
+    if not reports:
+        theme.render_empty_state(
+            "file",
+            "No reports yet",
+            "Run an analysis and the generated reports will be indexed here for quick access.",
+        )
+        return
+
+    for idx, report in enumerate(reports):
+        run_id = report.get('run_id', 'Unknown')
+        generated_at = report.get('generated_at', 'Unknown')[:10]
+        signals = report.get('signals', 0)
+        hypotheses = report.get('hypotheses', 0)
+        status = str(report.get('status', 'unknown'))
+        status_badge = theme.status_badge(
+            "success" if status.lower() in {"success", "complete"} else "neutral",
+            status,
+        )
+        c1, c2, c3, c4 = st.columns([4, 2, 1.4, 1])
+        with c1:
+            st.markdown(
+                f'<div style="color:var(--aa-text);font-size:13px;font-weight:550;font-family:var(--aa-mono);">'
+                f"{run_id[:42]}</div>",
+                unsafe_allow_html=True,
+            )
+        with c2:
+            st.markdown(
+                f'<div style="color:var(--aa-dim);font-size:12px;">{signals} signals · {hypotheses} hypotheses</div>',
+                unsafe_allow_html=True,
+            )
+        with c3:
+            st.markdown(
+                f'<div style="display:flex;justify-content:flex-end;">{status_badge}</div>',
+                unsafe_allow_html=True,
+            )
+        with c4:
+            if st.button("View", key=f"view_report_{idx}_{run_id}", width='stretch'):
+                st.switch_page("pages/05_Reports.py")
+        st.markdown(
+            f'<div style="color:var(--aa-dim);font-size:11px;font-family:var(--aa-mono);">'
+            f"generated {generated_at}</div>",
+            unsafe_allow_html=True,
+        )
+        if idx < len(reports) - 1:
+            st.markdown(
+                '<div style="height:1px;background:var(--aa-border-soft);margin:.55rem 0;"></div>',
+                unsafe_allow_html=True,
+            )
+
+
 def render_home_page():
     """Render the home/dashboard page."""
-    st.header("Welcome to Agent Autopsy")
-    st.markdown("""
-    Agent Autopsy helps you debug and analyze agent execution traces.
-    Identify root causes, detect patterns, and get actionable recommendations.
-    """)
+    theme.render_hero(
+        "Agent Autopsy",
+        "Understand why your agent failed.",
+        "Load an execution trace and reconstruct the exact sequence of events — root causes, "
+        "failure patterns, and recommended fixes — without reading raw JSON.",
+    )
 
-    st.markdown("---")
+    _render_home_actions()
+    st.markdown(
+        '<div style="height:1px;background:var(--aa-border-soft);margin:1.6rem 0;"></div>',
+        unsafe_allow_html=True,
+    )
+    _render_recent_files()
+    st.markdown(
+        '<div style="height:1px;background:var(--aa-border-soft);margin:1.6rem 0;"></div>',
+        unsafe_allow_html=True,
+    )
+    _render_recent_reports()
 
-    # Quick actions
-    col1, col2, col3 = st.columns(3)
 
-    with col1:
-        st.subheader("📊 Analyze Trace")
-        st.markdown("Upload and analyze a single trace file.")
-        if st.button("Go to Analyze", key="home_analyze", width='stretch'):
-            st.switch_page("pages/02_Analyze_Trace.py")
-
-    with col2:
-        st.subheader("📁 Batch Analysis")
-        st.markdown("Analyze all traces in a directory.")
-        if st.button("Go to Batch", key="home_batch", width='stretch'):
-            st.switch_page("pages/04_Batch_Analysis.py")
-
-    with col3:
-        st.subheader("📝 View Reports")
-        st.markdown("Browse previously generated reports.")
-        if st.button("Go to Reports", key="home_reports", width='stretch'):
-            st.switch_page("pages/05_Reports.py")
-
-    st.markdown("---")
-
-    # Recent traces
-    st.subheader("Recent Traces")
-    traces_dir = Path("traces")
-    if traces_dir.exists():
-        trace_files = sorted(traces_dir.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)[:5]
-        if trace_files:
-            for idx, trace_file in enumerate(trace_files):
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.text(trace_file.name)
-                with col2:
-                    if st.button("Analyze", key=f"quick_{idx}_{trace_file.name}"):
-                        try:
-                            st.session_state.trace = api.load_trace(trace_file)
-                            st.switch_page("pages/02_Analyze_Trace.py")
-                        except (ParseError, SchemaValidationError, PluginError) as e:
-                            st.error(f"Error loading trace: {e}")
-                        except Exception:
-                            logger.exception("Failed loading recent trace file: %s", trace_file)
-                            st.error("Error loading trace (see logs for details).")
-        else:
-            st.info("No trace files found in ./traces/")
-    else:
-        st.info("Traces directory not found. Create ./traces/ to store trace files.")
-
-    st.markdown("---")
-
-    # Recent reports
-    st.subheader("Recent Reports")
-    reports = load_reports_index()[:5]
-    if reports:
-        for idx, report in enumerate(reports):
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                st.text(f"{report.get('run_id', 'Unknown')[:30]} - {report.get('generated_at', 'Unknown')[:10]}")
-            with col2:
-                # Use index and run_id to ensure unique key
-                run_id = report.get('run_id', f'unknown_{idx}')
-                if st.button("View", key=f"view_report_{idx}_{run_id}"):
-                    st.switch_page("pages/05_Reports.py")
-    else:
-        st.info("No reports generated yet.")
-
+# ---------------------------------------------------------------------------
+# Analyze
+# ---------------------------------------------------------------------------
 
 def render_analyze_page():
     """Render the analyze trace page."""
-    st.header("Analyze Trace")
+    theme.render_hero(
+        "Analyze",
+        "Inspect a single run.",
+        "Upload a trace JSON file or pick one from the traces directory, then run the "
+        "deterministic analysis pipeline to identify what went wrong.",
+    )
 
     # File upload or selection
     upload_tab, select_tab = st.tabs(["Upload File", "Select from Directory"])
 
     with upload_tab:
-        uploaded_file = st.file_uploader("Upload trace JSON file", type=["json"])
+        uploaded_file = st.file_uploader("Upload trace JSON file", type=["json"], label_visibility="collapsed")
         if uploaded_file:
-            try:
-                content = json.load(uploaded_file)
-                # Save temporarily
-                temp_path = Path(f"/tmp/autopsy_upload_{uploaded_file.name}")
-                with open(temp_path, "w") as f:
-                    json.dump(content, f)
-                st.session_state.trace = api.load_trace(temp_path)
-                st.success("Trace loaded successfully!")
-            except (ParseError, SchemaValidationError, PluginError) as e:
-                st.error(f"Error parsing trace: {e}")
-            except Exception:
-                logger.exception("Failed parsing uploaded trace file: %s", uploaded_file.name)
-                st.error("Error parsing trace (see logs for details).")
+            with st.status("Loading trace…", expanded=True) as load_status:
+                try:
+                    content = json.load(uploaded_file)
+                    # Save temporarily
+                    temp_path = Path(f"/tmp/autopsy_upload_{uploaded_file.name}")
+                    with open(temp_path, "w") as f:
+                        json.dump(content, f)
+                    st.session_state.trace = api.load_trace(temp_path)
+                    load_status.update(label="Trace loaded", state="complete")
+                    st.success("Trace loaded successfully!")
+                except (ParseError, SchemaValidationError, PluginError) as e:
+                    st.error(f"Error parsing trace: {e}")
+                except Exception:
+                    logger.exception("Failed parsing uploaded trace file: %s", uploaded_file.name)
+                    st.error("Error parsing trace (see logs for details).")
 
     with select_tab:
         traces_dir = Path("traces")
@@ -270,8 +421,14 @@ def render_analyze_page():
                     "Select trace file",
                     options=trace_files,
                     format_func=lambda x: x.name,
+                    label_visibility="collapsed",
                 )
-                if st.button("Load Trace"):
+                st.markdown(
+                    f'<div style="color:var(--aa-dim);font-size:12px;margin:-.55rem 0 .6rem;">'
+                    f"{len(trace_files)} trace files available</div>",
+                    unsafe_allow_html=True,
+                )
+                if st.button("Load Trace", type="primary"):
                     try:
                         st.session_state.trace = api.load_trace(selected_file)
                         st.success("Trace loaded successfully!")
@@ -282,17 +439,33 @@ def render_analyze_page():
                         logger.exception("Failed parsing selected trace file: %s", selected_file)
                         st.error("Error parsing trace (see logs for details).")
             else:
-                st.info("No trace files found in ./traces/")
+                theme.render_empty_state(
+                    "file",
+                    "No trace files found",
+                    "Place JSON trace exports in ./traces/ and they will be selectable here.",
+                )
         else:
-            st.info("Traces directory not found.")
+            theme.render_empty_state(
+                "file",
+                "Traces directory not found",
+                "Create ./traces/ and add JSON exports to use directory selection.",
+            )
 
-    st.markdown("---")
+    st.markdown(
+        '<div style="height:1px;background:var(--aa-border-soft);margin:1.4rem 0;"></div>',
+        unsafe_allow_html=True,
+    )
 
     # Analysis options
     if st.session_state.trace:
         trace = st.session_state.trace
 
-        st.subheader("Analysis Options")
+        theme.render_section_header(
+            "Pipeline",
+            "Analysis options",
+            right=theme.status_badge("info", "Trace loaded"),
+        )
+
         col1, col2 = st.columns(2)
 
         with col1:
@@ -322,7 +495,8 @@ def render_analyze_page():
                 config.skip_embeddings = True
             try:
                 api.apply_embedding_defaults_for_trace(trace)
-                with st.spinner("Running pre-analysis..."):
+                with st.status("Running pre-analysis...", expanded=True) as status_box:
+                    status_box.write("Reconstructing execution order…")
                     preanalysis = api.run_preanalysis(trace)
                 st.session_state.preanalysis = preanalysis
 
@@ -401,7 +575,10 @@ def render_analyze_page():
             finally:
                 config.skip_embeddings = prev_skip
 
-        st.markdown("---")
+        st.markdown(
+            '<div style="height:1px;background:var(--aa-border-soft);margin:1.4rem 0;"></div>',
+            unsafe_allow_html=True,
+        )
 
         # Display results in tabs
         if st.session_state.trace:
@@ -421,100 +598,168 @@ def render_analyze_page():
 
             with tabs[4]:
                 render_report_tab()
+    else:
+        theme.render_empty_state(
+            "upload",
+            "Load a trace to begin",
+            "Upload a trace JSON in the Upload File tab, or select one from the traces directory. "
+            "Then configure the pipeline and run the analysis.",
+        )
 
 
 def render_summary_tab(trace):
     """Render trace summary tab."""
-    st.subheader("Trace Summary")
-
     summary = api.trace_summary(trace)
 
-    # Metrics row
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Status", summary.get("status", "N/A"))
-    with col2:
-        st.metric("Total Events", summary.get("total_events", 0))
-    with col3:
-        st.metric("Errors", summary.get("errors", 0))
-    with col4:
-        duration = summary.get("duration_ms")
-        st.metric("Duration", f"{duration}ms" if duration else "N/A")
+    status_raw = summary.get("status", "N/A")
+    status_badge = theme.status_badge(
+        "success" if str(status_raw).lower() in {"success", "complete"} else "neutral",
+        str(status_raw),
+    )
+    st.markdown(
+        f"""
+        <div class="aa-card-head" style="margin:.4rem 0 .9rem;">
+          <div>
+            <div class="aa-section-kicker">Overview</div>
+            <div class="aa-section-title">Trace summary</div>
+          </div>
+          {status_badge}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("LLM Calls", summary.get("llm_calls", 0))
-    with col2:
-        st.metric("Tool Calls", summary.get("tool_calls", 0))
-    with col3:
-        tokens = summary.get("total_tokens")
-        st.metric("Total Tokens", tokens if tokens else "N/A")
-    with col4:
-        st.metric("Framework", summary.get("framework", "N/A"))
+    duration = summary.get("duration_ms")
+    tokens = summary.get("total_tokens")
+    theme.render_stat_cards(
+        [
+            {"label": "Total events", "value": summary.get("total_events", 0)},
+            {"label": "Errors", "value": summary.get("errors", 0), "tone": "error" if summary.get("errors", 0) else None},
+            {"label": "Duration", "value": f"{duration}ms" if duration else "N/A"},
+            {"label": "Framework", "value": summary.get("framework", "N/A")},
+            {"label": "LLM calls", "value": summary.get("llm_calls", 0)},
+            {"label": "Tool calls", "value": summary.get("tool_calls", 0)},
+            {"label": "Total tokens", "value": tokens if tokens else "N/A"},
+            {"label": "Status", "value": status_raw},
+        ],
+        columns=4,
+    )
 
-    st.markdown("---")
-
-    # Details
-    with st.expander("Full Details"):
+    with st.expander("Full details"):
         st.json(summary)
 
 
 def render_signals_tab():
     """Render signals tab."""
-    st.subheader("Detected Signals")
+    theme.render_section_header("Findings", "Detected signals")
 
     if not st.session_state.preanalysis:
-        st.info("Run analysis to see detected signals.")
+        theme.render_empty_state(
+            "play",
+            "No signals yet",
+            "Run the analysis pipeline to detect behavioral signals in this trace.",
+        )
         return
 
     signals = st.session_state.preanalysis.signals
 
     if not signals:
-        st.success("No significant issues detected!")
+        st.markdown(
+            '<div style="border:1px solid rgba(103,189,145,.3);background:rgba(103,189,145,.07);'
+            'border-radius:8px;padding:.9rem 1rem;color:#67bd91;font-size:13px;font-weight:550;">'
+            "✓ No significant issues detected.</div>",
+            unsafe_allow_html=True,
+        )
         return
 
     for signal in signals:
-        icon = get_severity_icon(signal.severity)
-        with st.expander(f"{icon} {signal.type} - {signal.severity.upper()}", expanded=signal.severity in ["critical", "high"]):
+        severity = str(signal.severity)
+        expanded = severity in ["critical", "high"]
+        with st.expander(f"{signal.type.replace('_', ' ').title()} · {severity.upper()}", expanded=expanded):
+            header_col, badge_col = st.columns([3, 1])
+            with badge_col:
+                st.markdown(
+                    f'<div style="display:flex;justify-content:flex-end;">{theme.severity_badge(severity)}</div>',
+                    unsafe_allow_html=True,
+                )
+            with header_col:
+                st.markdown(
+                    f"<div style='color:var(--aa-text);font-size:13.5px;font-weight:550;'>"
+                    f"{signal.type.replace('_', ' ').title()}</div>",
+                    unsafe_allow_html=True,
+                )
             st.markdown(f"**Evidence:** {signal.evidence}")
-            st.markdown(f"**Events:** {signal.event_ids}")
+            st.markdown(
+                f"<span style='color:var(--aa-dim);font-size:12px;'>Related events: "
+                f"<code style='font-family:var(--aa-mono);color:var(--aa-muted);'>{signal.event_ids}</code></span>",
+                unsafe_allow_html=True,
+            )
             if signal.metadata:
-                st.json(signal.metadata)
+                with st.expander("Signal metadata"):
+                    st.json(signal.metadata)
 
 
 def render_hypotheses_tab():
     """Render hypotheses tab."""
-    st.subheader("Root Cause Hypotheses")
+    theme.render_section_header("Findings", "Root cause hypotheses")
 
     if not st.session_state.preanalysis:
-        st.info("Run analysis to see hypotheses.")
+        theme.render_empty_state(
+            "play",
+            "No hypotheses yet",
+            "Run the analysis pipeline to generate root cause hypotheses.",
+        )
         return
 
     hypotheses = st.session_state.preanalysis.hypotheses
 
     if not hypotheses:
-        st.info("No hypotheses generated.")
+        theme.render_empty_state(
+            "check",
+            "No hypotheses generated",
+            "The deterministic pipeline found no candidate root causes for this trace.",
+        )
         return
 
     for i, hyp in enumerate(hypotheses, 1):
         confidence_pct = int(hyp.confidence * 100)
-        with st.expander(f"#{i}: {hyp.description} ({confidence_pct}% confidence)", expanded=i <= 2):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(f"**Category:** {hyp.category}")
-                st.progress(hyp.confidence)
-            with col2:
-                st.markdown(f"**Supporting Events:** {hyp.supporting_events}")
+        expanded = i <= 2
+        with st.expander(f"#{i} · {hyp.description}", expanded=expanded):
+            st.markdown(
+                f"""
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem;">
+                  <span style="color:var(--aa-muted);font-size:12px;">Confidence</span>
+                  <span style="color:var(--aa-text);font-weight:650;font-variant-numeric:tabular-nums;font-size:13px;">{confidence_pct}%</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.progress(min(max(hyp.confidence, 0.0), 1.0))
+            st.markdown(
+                f"<span style='color:var(--aa-dim);font-size:12px;'>Category: "
+                f"<code style='font-family:var(--aa-mono);color:var(--aa-muted);'>{hyp.category}</code> · "
+                f"Supporting events: <code style='font-family:var(--aa-mono);color:var(--aa-muted);'>{hyp.supporting_events}</code></span>",
+                unsafe_allow_html=True,
+            )
 
             if hyp.suggested_fixes:
-                st.markdown("**Suggested Fixes:**")
+                st.markdown(
+                    '<div style="color:var(--aa-dim);font:600 10px var(--aa-mono);letter-spacing:.1em;'
+                    'text-transform:uppercase;margin:.8rem 0 .35rem;">Suggested fixes</div>',
+                    unsafe_allow_html=True,
+                )
                 for fix in hyp.suggested_fixes:
-                    st.markdown(f"- {fix}")
+                    st.markdown(
+                        f'<div style="display:flex;gap:.6rem;align-items:flex-start;padding:.32rem 0;'
+                        f'color:var(--aa-muted);font-size:12.5px;border-top:1px solid var(--aa-border-soft);">'
+                        f'<span style="color:var(--aa-accent);font:600 11px var(--aa-mono);">✓</span>{fix}</div>',
+                        unsafe_allow_html=True,
+                    )
 
 
 def render_timeline_tab(trace):
     """Render timeline tab."""
-    st.subheader("Event Timeline")
+    theme.render_section_header("Sequence", "Event timeline")
 
     # Filters
     col1, col2, col3 = st.columns(3)
@@ -537,13 +782,18 @@ def render_timeline_tab(trace):
                   or search_term.lower() in str(e.input or "").lower()
                   or search_term.lower() in str(e.output or "").lower()]
 
-    st.markdown(f"Showing {len(events)} of {len(trace.events)} events")
+    st.markdown(
+        f'<div style="color:var(--aa-dim);font-size:12px;margin:.35rem 0 .6rem;">'
+        f"Showing <b style='color:var(--aa-muted);'>{len(events)}</b> of {len(trace.events)} events</div>",
+        unsafe_allow_html=True,
+    )
 
     # Display events
     for event in events[:100]:  # Limit to 100 for performance
-        error_marker = "❌ " if event.is_error() else ""
         display_name = get_event_display_name(event)
-        with st.expander(f"{error_marker}Event {event.event_id}: {event.type.value} - {display_name}"):
+        is_error = event.is_error()
+        marker = "❌" if is_error else "·"
+        with st.expander(f"{marker} Event {event.event_id}: {event.type.value} — {display_name}"):
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown(f"**Type:** {event.type.value}")
@@ -586,13 +836,16 @@ def render_timeline_tab(trace):
 
 def render_report_tab():
     """Render report tab."""
-    st.subheader("Generated Report")
+    theme.render_section_header("Output", "Generated report")
 
     if not st.session_state.report_markdown:
-        st.info("Run analysis to generate a report.")
+        theme.render_empty_state(
+            "play",
+            "No report yet",
+            "Run the analysis pipeline to generate a Markdown and JSON report.",
+        )
         return
 
-    # Download buttons
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
@@ -611,15 +864,27 @@ def render_report_tab():
             width='stretch',
         )
 
-    st.markdown("---")
+    st.markdown(
+        '<div style="height:1px;background:var(--aa-border-soft);margin:1.2rem 0;"></div>',
+        unsafe_allow_html=True,
+    )
 
     # Report preview
-    st.markdown(st.session_state.report_markdown)
+    with st.expander("Preview report", expanded=True):
+        st.markdown(st.session_state.report_markdown)
 
+
+# ---------------------------------------------------------------------------
+# Trace viewer
+# ---------------------------------------------------------------------------
 
 def render_trace_viewer_page():
     """Render the trace viewer page."""
-    st.header("Trace Viewer")
+    theme.render_hero(
+        "Viewer",
+        "Walk through the run, event by event.",
+        "Browse every event in the loaded trace with full input, output, and error context.",
+    )
 
     if not st.session_state.trace:
         st.info("Load a trace from the Analyze page first, or select one below.")
@@ -633,7 +898,7 @@ def render_trace_viewer_page():
                     options=trace_files,
                     format_func=lambda x: x.name,
                 )
-                if st.button("Load Trace"):
+                if st.button("Load Trace", type="primary"):
                     try:
                         st.session_state.trace = api.load_trace(selected_file)
                         st.rerun()
@@ -642,6 +907,18 @@ def render_trace_viewer_page():
                     except Exception:
                         logger.exception("Failed loading trace in viewer: %s", selected_file)
                         st.error("Error parsing trace (see logs for details).")
+            else:
+                theme.render_empty_state(
+                    "file",
+                    "No trace files found",
+                    "Place JSON trace exports in ./traces/ to select them here.",
+                )
+        else:
+            theme.render_empty_state(
+                "file",
+                "Traces directory not found",
+                "Create ./traces/ and add JSON exports to use directory selection.",
+            )
         return
 
     trace = st.session_state.trace
@@ -650,11 +927,14 @@ def render_trace_viewer_page():
     col1, col2 = st.columns([1, 2])
 
     with col1:
-        st.subheader("Events")
+        st.markdown(
+            '<div class="aa-section-kicker" style="margin-bottom:.55rem;">Events</div>',
+            unsafe_allow_html=True,
+        )
 
         # Filters
         event_types = ["All"] + list(set(e.type.value for e in trace.events))
-        selected_type = st.selectbox("Filter by type", event_types, key="viewer_type")
+        selected_type = st.selectbox("Filter by type", event_types, key="viewer_type", label_visibility="collapsed")
         show_errors = st.checkbox("Show errors only", key="viewer_errors")
 
         # Event list
@@ -666,16 +946,25 @@ def render_trace_viewer_page():
 
         selected_event = None
         for event in events[:50]:
-            error_marker = "❌ " if event.is_error() else ""
+            marker = "❌ " if event.is_error() else ""
             display_name = get_event_display_name(event)
-            label = f"{error_marker}{event.event_id}: {event.type.value[:10]}"
+            label = f"{marker}{event.event_id}: {event.type.value[:10]}"
             if display_name != "unnamed":
-                label += f" - {display_name[:15]}"
+                label += f" — {display_name[:15]}"
             if st.button(label, key=f"ev_{event.event_id}", width='stretch'):
                 selected_event = event
 
+        if not events:
+            st.markdown(
+                '<div style="color:var(--aa-dim);font-size:12.5px;padding:.6rem 0;">No events match the filters.</div>',
+                unsafe_allow_html=True,
+            )
+
     with col2:
-        st.subheader("Event Details")
+        st.markdown(
+            '<div class="aa-section-kicker" style="margin-bottom:.55rem;">Details</div>',
+            unsafe_allow_html=True,
+        )
 
         if selected_event:
             event = selected_event
@@ -699,7 +988,10 @@ def render_trace_viewer_page():
                     with st.expander("Stack Trace"):
                         st.code(event.error.stack)
 
-            st.markdown("---")
+            st.markdown(
+                '<div style="height:1px;background:var(--aa-border-soft);margin:1rem 0;"></div>',
+                unsafe_allow_html=True,
+            )
 
             st.markdown("**Input:**")
             if event.input:
@@ -710,7 +1002,10 @@ def render_trace_viewer_page():
                 else:
                     st.code(str(event.input))
             else:
-                st.text("No input")
+                st.markdown(
+                    '<div style="color:var(--aa-dim);font-size:12.5px;">No input</div>',
+                    unsafe_allow_html=True,
+                )
 
             st.markdown("**Output:**")
             if event.output:
@@ -721,16 +1016,30 @@ def render_trace_viewer_page():
                 else:
                     st.code(str(event.output))
             else:
-                st.text("No output")
+                st.markdown(
+                    '<div style="color:var(--aa-dim);font-size:12.5px;">No output</div>',
+                    unsafe_allow_html=True,
+                )
         else:
-            st.info("Select an event from the list to view details.")
+            theme.render_empty_state(
+                "search",
+                "Select an event",
+                "Pick an event from the left panel to inspect its input, output, and metadata.",
+            )
 
+
+# ---------------------------------------------------------------------------
+# Batch analysis
+# ---------------------------------------------------------------------------
 
 def render_batch_analysis_page():
     """Render the batch analysis page."""
-    st.header("Batch Analysis")
-
-    st.markdown("Analyze all trace files in a directory at once.")
+    theme.render_hero(
+        "Batch",
+        "Analyze every trace in a directory.",
+        "Run the deterministic pipeline across all JSON traces in a folder and review the "
+        "results in a single table.",
+    )
 
     # Directory selection
     default_traces_dir = "./traces"
@@ -746,13 +1055,17 @@ def render_batch_analysis_page():
     traces_path = Path(traces_dir)
     if traces_path.exists():
         trace_files = list(traces_path.glob("*.json"))
-        st.info(f"Found {len(trace_files)} trace files")
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:.5rem;margin:.5rem 0;">'
+            f'<span class="aa-badge tone-info"><i></i>{len(trace_files)} trace files</span></div>',
+            unsafe_allow_html=True,
+        )
     else:
         trace_files = []
         st.warning("Directory not found")
 
     # Run batch analysis
-    if st.button("Run Batch Analysis", type="primary", disabled=len(trace_files) == 0):
+    if st.button("Run Batch Analysis", type="primary", disabled=len(trace_files) == 0, width='stretch'):
         results = []
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -816,24 +1129,27 @@ def render_batch_analysis_page():
 
     # Display results
     if st.session_state.batch_results:
-        st.markdown("---")
-        st.subheader("Results")
+        st.markdown(
+            '<div style="height:1px;background:var(--aa-border-soft);margin:1.4rem 0;"></div>',
+            unsafe_allow_html=True,
+        )
+        theme.render_section_header("Output", "Results")
 
         results = st.session_state.batch_results
 
         # Summary metrics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Traces", len(results))
-        with col2:
-            successful = sum(1 for r in results if r.get("success"))
-            st.metric("Successful", successful)
-        with col3:
-            total_signals = sum(r.get("signals", 0) for r in results)
-            st.metric("Total Signals", total_signals)
-        with col4:
-            total_errors = sum(r.get("errors", 0) for r in results)
-            st.metric("Total Errors", total_errors)
+        successful = sum(1 for r in results if r.get("success"))
+        total_signals = sum(r.get("signals", 0) for r in results)
+        total_errors = sum(r.get("errors", 0) for r in results)
+        theme.render_stat_cards(
+            [
+                {"label": "Total traces", "value": len(results)},
+                {"label": "Successful", "value": successful, "tone": "success"},
+                {"label": "Total signals", "value": total_signals, "tone": "info"},
+                {"label": "Total errors", "value": total_errors, "tone": "error" if total_errors else None},
+            ],
+            columns=4,
+        )
 
         # Results table
         st.dataframe(
@@ -866,14 +1182,27 @@ def render_batch_analysis_page():
                     st.markdown(f"- **{row['file']}**: {row.get('error', 'Unknown error')}")
 
 
+# ---------------------------------------------------------------------------
+# Reports
+# ---------------------------------------------------------------------------
+
 def render_reports_page():
     """Render the reports page."""
-    st.header("Reports")
+    theme.render_hero(
+        "Reports",
+        "Browse generated reports.",
+        "All analysis outputs are stored on disk as Markdown or JSON and listed here "
+        "newest first.",
+    )
 
     reports_dir = Path("reports")
 
     if not reports_dir.exists():
-        st.info("No reports directory found. Run an analysis to generate reports.")
+        theme.render_empty_state(
+            "file",
+            "No reports directory found",
+            "Run an analysis to generate reports — they will be stored in ./reports/.",
+        )
         return
 
     # List report files
@@ -881,14 +1210,17 @@ def render_reports_page():
     report_files = sorted(report_files, key=lambda x: x.stat().st_mtime, reverse=True)
 
     if not report_files:
-        st.info("No reports found. Run an analysis to generate reports.")
+        theme.render_empty_state(
+            "file",
+            "No reports found",
+            "Run an analysis to generate reports — they will appear here.",
+        )
         return
 
     # Report list
     col1, col2 = st.columns([1, 2])
 
     with col1:
-        st.subheader("Available Reports")
         selected_report = None
         for idx, report_file in enumerate(report_files[:20]):
             mtime = datetime.fromtimestamp(report_file.stat().st_mtime)
@@ -897,8 +1229,6 @@ def render_reports_page():
                 selected_report = report_file
 
     with col2:
-        st.subheader("Report Content")
-
         if selected_report:
             content = selected_report.read_text()
 
@@ -910,31 +1240,53 @@ def render_reports_page():
                 mime="text/markdown" if selected_report.suffix == ".md" else "application/json",
             )
 
-            st.markdown("---")
+            st.markdown(
+                '<div style="height:1px;background:var(--aa-border-soft);margin:1.1rem 0;"></div>',
+                unsafe_allow_html=True,
+            )
 
-            if selected_report.suffix == ".json":
-                try:
-                    st.json(json.loads(content))
-                except json.JSONDecodeError:
-                    logger.warning("Invalid JSON report content in %s", selected_report, exc_info=True)
-                    st.code(content)
-            else:
-                st.markdown(content)
+            with st.expander("Preview report", expanded=True):
+                if selected_report.suffix == ".json":
+                    try:
+                        st.json(json.loads(content))
+                    except json.JSONDecodeError:
+                        logger.warning("Invalid JSON report content in %s", selected_report, exc_info=True)
+                        st.code(content)
+                else:
+                    st.markdown(content)
         else:
-            st.info("Select a report from the list to view.")
+            theme.render_empty_state(
+                "search",
+                "Select a report",
+                "Choose a report from the list on the left to preview and download it.",
+            )
 
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
 
 def render_settings_page():
     """Render the settings page."""
-    st.header("Settings")
+    theme.render_hero(
+        "Settings",
+        "Configuration",
+        "Review the current pipeline configuration, credential status, and detection "
+        "thresholds.",
+    )
 
     config = get_config()
 
-    st.subheader("API Configuration")
-
     # API Key status
     if api.llm_credentials_configured(config):
-        st.success(f"LLM credentials are configured for provider: {config.llm_provider}")
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:.6rem;border:1px solid rgba(103,189,145,.3);'
+            f'background:rgba(103,189,145,.07);border-radius:8px;padding:.85rem 1rem;">'
+            f'{theme.status_badge("success", "Configured")}'
+            f'<span style="color:var(--aa-muted);font-size:13px;">LLM credentials are configured for provider '
+            f'<code style="font-family:var(--aa-mono);color:var(--aa-text);">{config.llm_provider}</code></span></div>',
+            unsafe_allow_html=True,
+        )
     else:
         st.warning(f"LLM credentials are not set for provider: {config.llm_provider}")
         st.markdown("""
@@ -942,33 +1294,68 @@ def render_settings_page():
         and set `PROVIDER` / `LLM_PROVIDER` to match. See project README.
         """)
 
-    st.markdown("---")
+    st.markdown(
+        '<div style="height:1px;background:var(--aa-border-soft);margin:1.4rem 0;"></div>',
+        unsafe_allow_html=True,
+    )
 
-    st.subheader("Model Settings")
-    st.text(f"Default Model: {config.default_model}")
-    st.text(f"Fallback Model: {config.fallback_model}")
-
-    st.markdown("---")
-
-    st.subheader("Detection Thresholds")
+    theme.render_section_header("Models", "Model settings")
     col1, col2 = st.columns(2)
     with col1:
-        st.text(f"Loop Threshold: {config.loop_threshold}")
-        st.text(f"Context Overflow: {config.context_overflow_threshold} tokens")
+        st.markdown(
+            f'<div class="aa-card"><div class="aa-stat-label">Default model</div>'
+            f'<div class="aa-stat-value" style="font-size:17px;">{config.default_model}</div></div>',
+            unsafe_allow_html=True,
+        )
     with col2:
-        st.text(f"Retry Window: {config.retry_window_seconds}s")
-        st.text(f"Max Retries: {config.max_retries}")
+        st.markdown(
+            f'<div class="aa-card"><div class="aa-stat-label">Fallback model</div>'
+            f'<div class="aa-stat-value" style="font-size:17px;">{config.fallback_model}</div></div>',
+            unsafe_allow_html=True,
+        )
 
-    st.markdown("---")
+    st.markdown(
+        '<div style="height:1px;background:var(--aa-border-soft);margin:1.4rem 0;"></div>',
+        unsafe_allow_html=True,
+    )
 
-    st.subheader("Paths")
-    st.text(f"Output Directory: {config.output_dir}")
-    st.text(f"Trace Directory: {config.trace_dir}")
+    theme.render_section_header("Detection", "Thresholds")
+    theme.render_stat_cards(
+        [
+            {"label": "Loop threshold", "value": config.loop_threshold},
+            {"label": "Context overflow", "value": f"{config.context_overflow_threshold} tokens"},
+            {"label": "Retry window", "value": f"{config.retry_window_seconds}s"},
+            {"label": "Max retries", "value": config.max_retries},
+        ],
+        columns=4,
+    )
 
-    st.markdown("---")
+    st.markdown(
+        '<div style="height:1px;background:var(--aa-border-soft);margin:1.4rem 0;"></div>',
+        unsafe_allow_html=True,
+    )
 
-    st.subheader("Current Configuration")
-    with st.expander("View Full Config"):
+    theme.render_section_header("Paths", "Directories")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(
+            f'<div class="aa-card"><div class="aa-stat-label">Output directory</div>'
+            f'<div class="aa-stat-value" style="font-size:15px;font-family:var(--aa-mono);word-break:break-all;">{config.output_dir}</div></div>',
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            f'<div class="aa-card"><div class="aa-stat-label">Trace directory</div>'
+            f'<div class="aa-stat-value" style="font-size:15px;font-family:var(--aa-mono);word-break:break-all;">{config.trace_dir}</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        '<div style="height:1px;background:var(--aa-border-soft);margin:1.4rem 0;"></div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("View full configuration (JSON)"):
         st.json(config.to_dict())
 
 
