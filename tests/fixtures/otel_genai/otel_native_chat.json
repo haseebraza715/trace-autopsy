@@ -1,0 +1,38 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "test-agent"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "opentelemetry.instrumentation.openai", "version": "0.1.0"},
+          "spans": [
+            {
+              "traceId": "0123456789abcdef0123456789abcdef",
+              "spanId": "1111111111111111",
+              "name": "chat gpt-4o",
+              "kind": 3,
+              "startTimeUnixNano": "1735660800000000000",
+              "endTimeUnixNano": "1735660801500000000",
+              "attributes": [
+                {"key": "gen_ai.system", "value": {"stringValue": "openai"}},
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                {"key": "gen_ai.response.model", "value": {"stringValue": "gpt-4o-2024-05-13"}},
+                {"key": "gen_ai.request.temperature", "value": {"doubleValue": 0.7}},
+                {"key": "gen_ai.usage.input_tokens", "value": {"intValue": 120}},
+                {"key": "gen_ai.usage.output_tokens", "value": {"intValue": 30}},
+                {"key": "gen_ai.prompt", "value": {"stringValue": "What is 2+2?"}},
+                {"key": "gen_ai.completion", "value": {"stringValue": "2+2 equals 4."}}
+              ],
+              "status": {"code": 1}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

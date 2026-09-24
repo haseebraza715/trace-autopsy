@@ -1,5 +1,7 @@
 # Agent Autopsy - Improvement Plan
 
+> **Archived 2026-05-06.** Superseded by [PLAN.md](../../PLAN.md) at the repo root. Kept for historical reference.
+
 > A detailed roadmap to take Agent Autopsy from a working prototype to a best-in-class open source agent debugging tool.
 
 ---

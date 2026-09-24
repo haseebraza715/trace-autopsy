@@ -1,0 +1,36 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "test-agent"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "opentelemetry.instrumentation.openai", "version": "0.1.0"},
+          "spans": [
+            {
+              "traceId": "0123456789abcdef0123456789abcdef",
+              "spanId": "3333333333333333",
+              "name": "openai.chat",
+              "kind": 3,
+              "startTimeUnixNano": "1735660800000000000",
+              "endTimeUnixNano": "1735660801500000000",
+              "attributes": [
+                {"key": "ai.system", "value": {"stringValue": "openai"}},
+                {"key": "ai.model.id", "value": {"stringValue": "gpt-4o"}},
+                {"key": "ai.prompt_tokens", "value": {"intValue": 120}},
+                {"key": "ai.completion_tokens", "value": {"intValue": 30}},
+                {"key": "ai.total_tokens", "value": {"intValue": 150}},
+                {"key": "ai.prompt", "value": {"stringValue": "What is 2+2?"}},
+                {"key": "ai.completion", "value": {"stringValue": "2+2 equals 4."}}
+              ],
+              "status": {"code": 1}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

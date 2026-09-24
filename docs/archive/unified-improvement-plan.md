@@ -1,5 +1,7 @@
 # Agent Autopsy — Unified Improvement Plan
 
+> **Archived 2026-05-06.** Superseded by [PLAN.md](../../PLAN.md) at the repo root. Kept for historical reference.
+
 A consolidated, prioritized plan combining critical review findings with concrete, actionable fixes. Ordered by impact and sequenced so early work unblocks later work.
 
 ---
@@ -10,10 +12,10 @@ These are foundational issues. Fix before adding any new features.
 
 ### 1.1 Replace silent exception handling
 **Problem:** Bare `except Exception:` blocks scattered across the codebase swallow failures with no logging.
-- [src/preanalysis/patterns.py:98-102](../src/preanalysis/patterns.py) — plugin failures disappear
-- [src/ingestion/parser.py:38](../src/ingestion/parser.py) — format detection errors ignored
-- [src/cli.py:99](../src/cli.py) — CLI swallows root causes
-- [src/analysis/agent.py:238-246](../src/analysis/agent.py) — LLM errors leave state inconsistent
+- [src/preanalysis/patterns.py:98-102](../../src/preanalysis/patterns.py) — plugin failures disappear
+- [src/ingestion/parser.py:38](../../src/ingestion/parser.py) — format detection errors ignored
+- [src/cli.py:99](../../src/cli.py) — CLI swallows root causes
+- [src/analysis/agent.py:238-246](../../src/analysis/agent.py) — LLM errors leave state inconsistent
 
 **Fix:**
 - Define specific exception types: `ParseError`, `SchemaValidationError`, `PluginError`, `LLMError`.
@@ -37,7 +39,7 @@ These are foundational issues. Fix before adding any new features.
 ---
 
 ### 1.3 Gate the embedding model on config
-**Problem:** [src/preanalysis/patterns.py:677](../src/preanalysis/patterns.py) lazy-loads a 1.5 GB sentence-transformers model via `@lru_cache` even when semantic drift detection is disabled or no goal is set.
+**Problem:** [src/preanalysis/patterns.py:677](../../src/preanalysis/patterns.py) lazy-loads a 1.5 GB sentence-transformers model via `@lru_cache` even when semantic drift detection is disabled or no goal is set.
 
 **Fix:**
 - Only load the embedding model when `semantic_drift_enabled=True` **and** a goal is present.
@@ -50,7 +52,7 @@ These are foundational issues. Fix before adding any new features.
 ## Phase 2 — Architecture (Week 2)
 
 ### 2.1 Extract a unified facade API
-**Problem:** [src/cli.py](../src/cli.py) imports from 7+ internal modules directly. Streamlit and MCP reach into internals independently. Any refactor ripples across all entry points.
+**Problem:** [src/cli.py](../../src/cli.py) imports from 7+ internal modules directly. Streamlit and MCP reach into internals independently. Any refactor ripples across all entry points.
 
 **Fix:**
 - Create `src/api.py` exposing: `analyze(trace_path, options) -> Report`, `detect_patterns(...)`, `generate_report(...)`.
@@ -74,7 +76,7 @@ These are foundational issues. Fix before adding any new features.
 ---
 
 ### 2.3 Abstract the LLM provider
-**Problem:** [src/utils/config.py](../src/utils/config.py) and prompts are hardcoded to OpenRouter via `langchain-openai`. No way to use Anthropic, Gemini, or Ollama without forking.
+**Problem:** [src/utils/config.py](../../src/utils/config.py) and prompts are hardcoded to OpenRouter via `langchain-openai`. No way to use Anthropic, Gemini, or Ollama without forking.
 
 **Fix:**
 - Introduce `PROVIDER=openrouter|anthropic|ollama|openai` env var.
@@ -103,14 +105,14 @@ These are foundational issues. Fix before adding any new features.
 
 **Fix:**
 - Add `tests/test_error_paths.py` covering: truncated JSON, wrong format detection, API key missing, LLM timeout mock, plugin raising.
-- Add tests for the LLM agent control flow in [src/analysis/agent.py](../src/analysis/agent.py) — budget enforcement, iteration caps, state transitions.
+- Add tests for the LLM agent control flow in [src/analysis/agent.py](../../src/analysis/agent.py) — budget enforcement, iteration caps, state transitions.
 
 **Effort:** 2 days. **Impact:** High.
 
 ---
 
 ### 3.3 MCP server tests
-**Problem:** [tests/test_mcp_service.py](../tests/test_mcp_service.py) has ~9 tests for a 642-line service.
+**Problem:** [tests/test_mcp_service.py](../../tests/test_mcp_service.py) has ~9 tests for a 642-line service.
 
 **Fix:**
 - Add mock-client tests covering all MCP tools/resources/prompts.
@@ -134,7 +136,7 @@ These are foundational issues. Fix before adding any new features.
 ---
 
 ### 4.2 MCP authentication
-**Problem:** [src/mcp/server.py](../src/mcp/server.py) exposes analysis tools over SSE with zero auth. Any local process can call `analyze_trace` on potentially sensitive traces.
+**Problem:** [src/mcp/server.py](../../src/mcp/server.py) exposes analysis tools over SSE with zero auth. Any local process can call `analyze_trace` on potentially sensitive traces.
 
 **Fix:**
 - Token-based auth for SSE transport (env var or config).
@@ -157,7 +159,7 @@ These are foundational issues. Fix before adding any new features.
 ---
 
 ### 4.4 Structured LLM output for quality scoring
-**Problem:** [src/analysis/agent.py](../src/analysis/agent.py) `ReportQualityValidator` uses naive regex on raw markdown. LLM can write "Root Cause: unknown" and score 100%. Citation regex `r"\bEvent(?:s)?\s+\d+"` is brittle.
+**Problem:** [src/analysis/agent.py](../../src/analysis/agent.py) `ReportQualityValidator` uses naive regex on raw markdown. LLM can write "Root Cause: unknown" and score 100%. Citation regex `r"\bEvent(?:s)?\s+\d+"` is brittle.
 
 **Fix:** (Simpler than the originally suggested AST + embeddings)
 - Have the LLM emit a JSON schema for the report (root cause, evidence events, recommendations) instead of free markdown.
@@ -171,10 +173,10 @@ These are foundational issues. Fix before adding any new features.
 ## Phase 5 — Documentation & Polish (Week 5)
 
 ### 5.1 Align docs with reality
-**Problem:** [ARCHITECTURE.md](../ARCHITECTURE.md) is 38 lines and skips token budgeting, contract validation, embedding fallback, plugin loading — all present in the code. README undersells pattern detection (actually ~13 detectors, not 6).
+**Problem:** [ARCHITECTURE.md](../../ARCHITECTURE.md) is 38 lines and skips token budgeting, contract validation, embedding fallback, plugin loading — all present in the code. README undersells pattern detection (actually ~13 detectors, not 6).
 
 **Fix:**
-- Expand [ARCHITECTURE.md](../ARCHITECTURE.md) with the real pipeline, including token budget math and quality thresholds.
+- Expand [ARCHITECTURE.md](../../ARCHITECTURE.md) with the real pipeline, including token budget math and quality thresholds.
 - Update README feature table to list all 13+ patterns.
 - Add `src/DESIGN.md` explaining *why* (deterministic-first, token estimation, contract validation).
 
@@ -198,7 +200,7 @@ These are foundational issues. Fix before adding any new features.
 **Problem:** Pattern coverage may be narrower than competitors. But: before adding more, verify the existing ~13 are documented and surfaced.
 
 **Fix:**
-- Step 1: audit [src/preanalysis/patterns.py](../src/preanalysis/patterns.py) and document every detector in [docs/patterns.md](patterns.md).
+- Step 1: audit [src/preanalysis/patterns.py](../../src/preanalysis/patterns.py) and document every detector in [docs/patterns.md](patterns.md).
 - Step 2: if gaps remain, add: tool argument schema drift, state mutation corruption, missing handoff conditions, silent hallucination (output cites nonexistent events).
 - Do **not** add patterns without matching tests.
 

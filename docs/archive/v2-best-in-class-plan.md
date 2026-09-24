@@ -1,5 +1,7 @@
 # Agent Autopsy v2 — Best-in-Class Local CLI Plan
 
+> **Archived 2026-05-06.** Superseded by [PLAN.md](../../PLAN.md) at the repo root. Kept for historical reference.
+
 **Prerequisite:** [unified-improvement-plan.md](unified-improvement-plan.md) is complete. That plan hardens the codebase; this plan makes it the tool people actually reach for.
 
 **Target:** A senior engineer debugging an agent failure at 2am reaches for `autopsy` before LangSmith, before `grep`, before their homegrown script.

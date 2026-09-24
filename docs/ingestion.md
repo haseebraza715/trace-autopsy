@@ -75,6 +75,22 @@ Dedicated parser available; unsupported/unknown structures are handled by the ge
 }
 ```
 
+**GenAI semantic conventions.** The OpenTelemetry parser speaks the GenAI semantic conventions natively, plus the OpenInference and traceloop/openllmetry dialects. Spans from any of the three SDKs collapse to the same canonical event:
+
+| Canonical field | OTel GenAI | OpenInference | traceloop |
+|---|---|---|---|
+| `event.type` | `gen_ai.operation.name` (chat, completion, tool_use, …) | `openinference.span.kind` | span name (`openai.chat`) |
+| `event.name` (model) | `gen_ai.request.model` / `gen_ai.response.model` | `llm.model_name` | `ai.model.id` |
+| `event.name` (tool) | `gen_ai.tool.name` | `tool.name` | `function.name` |
+| `event.input` | `gen_ai.prompt` / `gen_ai.request.messages` | `input.value` / `llm.input_messages` | `ai.prompt` |
+| `event.output` | `gen_ai.completion` / `gen_ai.response.messages` | `output.value` / `llm.output_messages` | `ai.completion` |
+| input tokens | `gen_ai.usage.input_tokens` | `llm.token_count.prompt` | `ai.prompt_tokens` |
+| output tokens | `gen_ai.usage.output_tokens` | `llm.token_count.completion` | `ai.completion_tokens` |
+
+Both input and output token counts are preserved in `event.metadata` (as `input_tokens`/`output_tokens` plus the original keys) so the cost detector can compute accurate per-direction pricing instead of approximating from a single total.
+
+Reference: [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/). Fixtures for all three SDK dialects live in [`tests/fixtures/otel_genai/`](../tests/fixtures/otel_genai/) and have a parametrized cross-SDK test in [`tests/test_otel_genai.py`](../tests/test_otel_genai.py).
+
 ### Generic Format
 
 Fallback format for any JSON structure. Attempts to extract:
