@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_autopsy.ingestion import TraceNormalizer, parse_trace_file
+from agent_autopsy.api import load_trace
 from agent_autopsy.preanalysis import PatternDetector
 
 logger = logging.getLogger(__name__)
@@ -60,10 +60,8 @@ class LiveTraceMonitor:
             if key in self._last_seen_mtime and self._last_seen_mtime[key] >= mtime:
                 continue
 
-            self._last_seen_mtime[key] = mtime
             try:
-                trace = parse_trace_file(trace_file)
-                trace = TraceNormalizer.normalize(trace)
+                trace = load_trace(trace_file)
             except Exception:
                 logger.exception("LiveTraceMonitor failed to parse %s", trace_file)
                 continue
@@ -79,6 +77,7 @@ class LiveTraceMonitor:
                         event_ids=pattern.event_ids,
                     )
                 )
+            self._last_seen_mtime[key] = mtime
         return alerts
 
     def stream(self, duration_seconds: float | None = None) -> Iterator[LiveAlert]:
