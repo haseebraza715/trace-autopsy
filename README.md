@@ -8,14 +8,11 @@ This release candidate leads with the deterministic offline CLI. The four bundle
 
 Requires Python **3.10 or newer**. Local verification used Python 3.11.16 on macOS; the other supported versions have not been rechecked for this candidate.
 
-These instructions target `fix/truthful-deterministic-analysis`, with local release changes awaiting review. They do not describe changes already published on `main`. A clone provides the branch's published contents, which lag this local candidate. Reproducing the results below requires baseline `8575a73e79c51779099ae2004a80a56c871a1ac0` and the reviewed release patch. The baseline must be supplied locally until publication is authorized.
+These instructions target the `fix/truthful-deterministic-analysis` branch, which contains the reviewed release candidate. They do not describe `main`, which still lags this branch.
 
 ```bash
 git clone --branch fix/truthful-deterministic-analysis https://github.com/haseebraza715/trace-autopsy.git
 cd trace-autopsy
-# Requires the locally supplied candidate history until publication:
-git checkout 8575a73e79c51779099ae2004a80a56c871a1ac0
-# Apply the reviewed release patch here.
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
