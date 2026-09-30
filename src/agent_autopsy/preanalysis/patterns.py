@@ -428,9 +428,9 @@ class PatternDetector:
                     pattern_type=PatternType.HALLUCINATED_TOOL,
                     severity=Severity.HIGH,
                     message=f"Found {len(hallucinated)} calls to unknown tools",
-                    evidence=f"Tool called not in available tools: {available_tools}",
+                    evidence=f"Tool called not in available tools: {sorted(available_tools)}",
                     event_ids=hallucinated,
-                    metadata={"available_tools": list(available_tools)},
+                    metadata={"available_tools": sorted(available_tools)},
                 )
             )
 
