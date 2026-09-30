@@ -1,0 +1,15 @@
+                                Trace comparison                                
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Metric                  ┃ Value                                              ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Trace A                 │ run_loop_001                                       │
+│ Trace B                 │ run_loop_fixed_001                                 │
+│ Event IDs only in A     │ [8, 9, 10]                                         │
+│ Event IDs only in B     │ []                                                 │
+│ Patterns only in A      │ empty_response, error_cascade, infinite_loop,      │
+│                         │ timeout_pattern                                    │
+│ Patterns only in B      │ None                                               │
+│ New tool signatures     │ 1                                                  │
+│ Removed tool signatures │ 0                                                  │
+│ Tool arg/name diffs     │ 1                                                  │
+└─────────────────────────┴────────────────────────────────────────────────────┘
