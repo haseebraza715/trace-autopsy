@@ -274,7 +274,7 @@ def analyze(
 
         if not quiet:
             console.print("\n")
-            _print_result_summary(result, preanalysis)
+            _print_result_summary(result, preanalysis, trace)
 
         if _trace_has_findings(trace, preanalysis):
             exit_code = 1
@@ -721,16 +721,23 @@ def _print_preanalysis_summary(preanalysis):
     _print_preanalysis(preanalysis)
 
 
-def _print_result_summary(result, preanalysis):
-    """Print analysis result summary."""
-    status = "[green]SUCCESS[/green]" if result.success else "[red]FAILED[/red]"
+def _print_result_summary(result, preanalysis, trace):
+    """Print analysis result summary.
+
+    ``result.success`` only says the analysis itself ran; the run's own
+    outcome is the trace status, shown separately so neither reads as the other.
+    """
+    completed = "[green]yes[/green]" if result.success else "[red]no[/red]"
+    clean = trace.status == TraceStatus.SUCCESS
+    trace_status = f"[green]{trace.status.value}[/green]" if clean else f"[red]{trace.status.value}[/red]"
     console.print(
         Panel.fit(
-            f"Analysis Status: {status}\n"
+            f"Analysis completed: {completed}\n"
+            f"Trace status: {trace_status}\n"
             f"Signals Found: {len(preanalysis.signals)}\n"
             f"Hypotheses Generated: {len(preanalysis.hypotheses)}",
-            title="Analysis Complete",
-            border_style="green" if result.success else "red",
+            title="Analysis Summary",
+            border_style="green" if result.success and not _trace_has_findings(trace, preanalysis) else "red",
         )
     )
 
@@ -892,7 +899,7 @@ def autopsy_run(
         console.print(f"\n[green]Report saved to:[/green] {output}")
 
         # Print result summary
-        _print_result_summary(result, preanalysis)
+        _print_result_summary(result, preanalysis, trace)
 
         # Exit codes: 1 = findings, 0 = clean (match `analyze`)
         if _trace_has_findings(trace, preanalysis):
