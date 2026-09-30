@@ -269,7 +269,11 @@ def analyze(
 
         if artifacts:
             artifact_generator = ArtifactGenerator(trace, preanalysis)
-            saved_artifacts = artifact_generator.save_all(artifacts)
+            try:
+                saved_artifacts = artifact_generator.save_all(artifacts, source_path=trace_file)
+            except (OSError, ValueError) as exc:
+                console.print(f"[red]Error saving artifacts:[/red] {exc}")
+                raise typer.Exit(2) from exc
             if not quiet:
                 console.print(f"\n[green]Artifacts saved to:[/green] {artifacts}")
                 for path in saved_artifacts:
