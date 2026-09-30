@@ -13,6 +13,7 @@ from typing import Any
 from agent_autopsy.analysis.agent import AnalysisResult
 from agent_autopsy.plugins import get_plugin_manager
 from agent_autopsy.schema import Trace
+from agent_autopsy.utils.atomic import aliases_source, atomic_write_text
 
 
 def markdown_to_plain(md: str) -> str:
@@ -417,7 +418,9 @@ class ReportGenerator:
 
         raise ValueError(f"Unknown report format: {format_name}")
 
-    def save(self, path: str | Path, format: str = "markdown") -> Path:
+    def save(
+        self, path: str | Path, format: str = "markdown", *, source_path: str | Path | None = None
+    ) -> Path:
         """Save report to file."""
         path = Path(path)
 
@@ -436,7 +439,9 @@ class ReportGenerator:
                 elif format == "text":
                     path = path.with_suffix(".txt")
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        if aliases_source(path, source_path):
+            raise ValueError("Report output must not overwrite the input trace")
+
+        atomic_write_text(path, content)
 
         return path

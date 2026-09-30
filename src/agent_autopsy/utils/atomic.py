@@ -25,6 +25,17 @@ def _atomic_write(path: Path, write: Any) -> None:
             raise
 
 
+def aliases_source(path: Path, source_path: Path | None) -> bool:
+    """Whether writing ``path`` would overwrite ``source_path`` (same path,
+    symlink or hardlink)."""
+    if source_path is None:
+        return False
+    path, source = Path(path), Path(source_path)
+    if path.resolve() == source.resolve():
+        return True
+    return path.exists() and source.exists() and path.samefile(source)
+
+
 def atomic_write_text(path: Path, text: str) -> None:
     _atomic_write(path, lambda f: f.write(text))
 

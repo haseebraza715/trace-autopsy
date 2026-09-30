@@ -250,7 +250,11 @@ def analyze(
 
         if output:
             save_fmt = fmt if fmt in ("json", "markdown", "text") else "markdown"
-            saved_path = report_generator.save(output, format=save_fmt)
+            try:
+                saved_path = report_generator.save(output, format=save_fmt, source_path=trace_file)
+            except (OSError, ValueError) as exc:
+                console.print(f"[red]Error saving report:[/red] {exc}")
+                raise typer.Exit(2) from exc
             if not quiet:
                 console.print(f"\n[green]Report saved to:[/green] {saved_path}")
         else:
@@ -880,7 +884,11 @@ def autopsy_run(
             # Generate and save the report
             report_gen = api.generate_report(trace, result)
             output_format = "json" if output.suffix.lower() == ".json" else "markdown"
-            output = report_gen.save(output, format=output_format)
+            try:
+                output = report_gen.save(output, format=output_format, source_path=trace_file)
+            except (OSError, ValueError) as exc:
+                console.print(f"[red]Error saving report:[/red] {exc}")
+                raise typer.Exit(2) from exc
 
             progress.update(task, description="Report generated")
 
