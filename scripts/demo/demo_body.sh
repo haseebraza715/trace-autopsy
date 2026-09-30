@@ -7,6 +7,8 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export PATH="$ROOT/.venv/bin:$PATH"
+export AUTOPSY_NO_EMBEDDINGS=1
+# --no-llm also prevents provider use when a caller has credentials configured.
 
 PROMPT='\033[1;32m❯\033[0m '
 
@@ -55,9 +57,9 @@ autopsy validate "$TRACE" 2>&1 | throttle 0.06
 sleep 0.9
 
 header "2/3 — Analyze: deterministic diagnosis, no LLM, no API keys"
-type_cmd "autopsy analyze $TRACE --format text -q"
+type_cmd "autopsy analyze $TRACE --no-llm --no-embeddings --format text -q"
 sleep 0.4
-FORCE_COLOR=1 autopsy analyze "$TRACE" --format text -q 2>&1 | throttle 0.055
+FORCE_COLOR=1 autopsy analyze "$TRACE" --no-llm --no-embeddings --format text -q 2>&1 | throttle 0.055
 rc=$?
 printf '\n\033[1;33mexit code %s — findings detected (CI gate: 0 = clean, 1 = findings, 2 = error)\033[0m\n' "$rc"
 sleep 1.4
