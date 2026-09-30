@@ -116,6 +116,10 @@ class GenericJSONParser(TraceParser):
                     return datetime.strptime(value.replace("+00:00", "Z"), fmt)
                 except ValueError:
                     continue
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                pass
         return None
 
     def _extract_status(self, data: dict[str, Any]) -> TraceStatus:
@@ -334,13 +338,11 @@ class GenericJSONParser(TraceParser):
             if not isinstance(raw_metadata, dict):
                 raw_metadata = {}
 
-            # ``or`` chains would treat a valid parent id of 0 as missing.
-            raw_parent = raw.get("parent_id")
-            if raw_parent is None:
-                raw_parent = raw.get("parentId")
+            raw_parent = first_non_none(raw, "parent_event_id", "parent_id", "parentId")
+            source_id = self._safe_parent_event_id(raw.get("event_id"))
 
             event = TraceEvent(
-                event_id=event_id,
+                event_id=source_id if source_id is not None else event_id,
                 parent_event_id=self._safe_parent_event_id(raw_parent),
                 span_id=raw.get("span_id") or raw.get("spanId"),
                 agent_id=(
