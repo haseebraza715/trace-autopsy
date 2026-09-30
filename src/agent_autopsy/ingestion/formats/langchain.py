@@ -9,7 +9,7 @@ import hashlib
 from datetime import datetime
 from typing import Any
 
-from agent_autopsy.ingestion.parser import TraceParser
+from agent_autopsy.ingestion.parser import TraceParser, first_non_none
 from agent_autopsy.schema import (
     EnvironmentInfo,
     EventError,
@@ -433,8 +433,8 @@ class LangChainParser(TraceParser):
                 )
 
         # Extract input/output
-        inputs = run.get("inputs") or run.get("input")
-        outputs = run.get("outputs") or run.get("output")
+        inputs = first_non_none(run, "inputs", "input")
+        outputs = first_non_none(run, "outputs", "output")
 
         # Calculate latency
         latency_ms = None
@@ -453,10 +453,7 @@ class LangChainParser(TraceParser):
         )
         if isinstance(token_usage, dict):
             token_count = (
-                token_usage.get("total_tokens")
-                or token_usage.get("total")
-                or token_usage.get("output_tokens")
-                or token_usage.get("completion_tokens")
+                first_non_none(token_usage, "total_tokens", "total", "output_tokens", "completion_tokens")
             )
             if token_count is not None:
                 try:
@@ -520,10 +517,10 @@ class LangChainParser(TraceParser):
             type=event_type,
             role=role,
             name=raw.get("name") or raw.get("tool"),
-            input=raw.get("input") or raw.get("inputs"),
-            output=raw.get("output") or raw.get("outputs"),
-            token_count=raw.get("token_count") or raw.get("tokens"),
-            latency_ms=raw.get("latency_ms") or raw.get("duration_ms"),
+            input=first_non_none(raw, "input", "inputs"),
+            output=first_non_none(raw, "output", "outputs"),
+            token_count=first_non_none(raw, "token_count", "tokens"),
+            latency_ms=first_non_none(raw, "latency_ms", "duration_ms"),
             timestamp=self._parse_timestamp(raw.get("timestamp") or raw.get("start_time")),
             error=error,
             metadata=raw.get("metadata") or raw.get("extra", {}),
@@ -657,24 +654,21 @@ class LangChainParser(TraceParser):
         elif "error" in event_name:
             event_type = "error"
 
-        token_count = callback.get("token_count") or callback.get("tokens")
+        token_count = first_non_none(callback, "token_count", "tokens")
         if token_count is None and isinstance(callback.get("usage"), dict):
             usage = callback["usage"]
             token_count = (
-                usage.get("total_tokens")
-                or usage.get("total")
-                or usage.get("completion_tokens")
-                or usage.get("output_tokens")
+                first_non_none(usage, "total_tokens", "total", "completion_tokens", "output_tokens")
             )
 
         return {
             "type": event_type,
             "run_id": callback.get("run_id") or callback.get("id"),
             "name": callback.get("name") or callback.get("tool_name") or event_name,
-            "input": callback.get("input") or callback.get("inputs") or callback.get("prompt"),
-            "output": callback.get("output") or callback.get("outputs") or callback.get("result"),
+            "input": first_non_none(callback, "input", "inputs", "prompt"),
+            "output": first_non_none(callback, "output", "outputs", "result"),
             "token_count": token_count,
-            "latency_ms": callback.get("latency_ms") or callback.get("duration_ms"),
+            "latency_ms": first_non_none(callback, "latency_ms", "duration_ms"),
             "timestamp": callback.get("timestamp") or callback.get("time"),
             "error": callback.get("error"),
             "metadata": callback.get("metadata") or callback.get("extra", {}),

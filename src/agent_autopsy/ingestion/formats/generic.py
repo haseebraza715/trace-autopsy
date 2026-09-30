@@ -9,7 +9,7 @@ import hashlib
 from datetime import datetime
 from typing import Any
 
-from agent_autopsy.ingestion.parser import TraceParser
+from agent_autopsy.ingestion.parser import TraceParser, first_non_none
 from agent_autopsy.schema import (
     EnvironmentInfo,
     EventError,
@@ -257,15 +257,10 @@ class GenericJSONParser(TraceParser):
 
                 if start_event:
                     # Merge: use start's input, end's output/tokens/latency
-                    merged = {
-                        **start_event,
-                        "type": base_type,
-                        "output": raw.get("output") or start_event.get("output"),
-                        "latency_ms": raw.get("latency_ms") or start_event.get("latency_ms"),
-                        "token_count": raw.get("token_count") or start_event.get("token_count"),
-                        "tokens": raw.get("tokens") or start_event.get("tokens"),
-                        "error": raw.get("error") or start_event.get("error"),
-                    }
+                    merged = {**start_event, "type": base_type}
+                    for field in ("output", "latency_ms", "token_count", "tokens", "error"):
+                        if raw.get(field) is not None:
+                            merged[field] = raw[field]
                     # Preserve the end timestamp as the event timestamp
                     if raw.get("ts") or raw.get("timestamp"):
                         merged["timestamp"] = raw.get("timestamp") or raw.get("ts")
@@ -358,10 +353,10 @@ class GenericJSONParser(TraceParser):
                 type=event_type,
                 role=role,
                 name=raw.get("name") or raw.get("tool") or raw.get("function") or raw.get("node"),
-                input=raw.get("input") or raw.get("args") or raw.get("content") or raw.get("query"),
-                output=raw.get("output") or raw.get("result") or raw.get("response"),
-                token_count=raw.get("token_count") or raw.get("tokens") or raw.get("tokenCount"),
-                latency_ms=raw.get("latency_ms") or raw.get("duration_ms") or raw.get("latency"),
+                input=first_non_none(raw, "input", "args", "content", "query"),
+                output=first_non_none(raw, "output", "result", "response"),
+                token_count=first_non_none(raw, "token_count", "tokens", "tokenCount"),
+                latency_ms=first_non_none(raw, "latency_ms", "duration_ms", "latency"),
                 timestamp=self._parse_timestamp(raw.get("timestamp") or raw.get("time") or raw.get("ts")),
                 error=error,
                 metadata=raw_metadata,

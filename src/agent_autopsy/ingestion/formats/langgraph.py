@@ -8,7 +8,7 @@ import hashlib
 from datetime import datetime
 from typing import Any
 
-from agent_autopsy.ingestion.parser import TraceParser
+from agent_autopsy.ingestion.parser import TraceParser, first_non_none
 from agent_autopsy.schema import (
     EnvironmentInfo,
     EventError,
@@ -288,8 +288,8 @@ class LangGraphParser(TraceParser):
 
         # Extract common fields
         name = raw.get("name") or raw.get("node") or raw.get("tool")
-        input_data = raw.get("input") or raw.get("args") or raw.get("content")
-        output_data = raw.get("output") or raw.get("result") or raw.get("response")
+        input_data = first_non_none(raw, "input", "args", "content")
+        output_data = first_non_none(raw, "output", "result", "response")
 
         # Handle error
         error = None
@@ -319,8 +319,8 @@ class LangGraphParser(TraceParser):
             name=name,
             input=input_data,
             output=output_data,
-            token_count=raw.get("token_count") or raw.get("tokens"),
-            latency_ms=raw.get("latency_ms") or raw.get("duration_ms"),
+            token_count=first_non_none(raw, "token_count", "tokens"),
+            latency_ms=first_non_none(raw, "latency_ms", "duration_ms"),
             timestamp=self._parse_timestamp(raw.get("timestamp")),
             error=error,
             metadata=raw.get("metadata", {}),
