@@ -47,6 +47,8 @@ class ContractViolation(BaseModel):
     message: str
     evidence: dict[str, Any] = Field(default_factory=dict)
     suggested_fix: str | None = None
+    # Informational violations are reported as notes, not scored or gated.
+    informational: bool = False
 
 
 class ContractRegistry(BaseModel):

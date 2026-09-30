@@ -329,6 +329,22 @@ class ReportGenerator:
             "",
             "---",
             "",
+        ])
+
+        notes = report.preanalysis.get("notes", [])
+        if notes:
+            lines.extend([
+                "## Informational Notes",
+                "",
+                "_Not scored and not counted as findings; they do not affect the exit code._",
+                "",
+            ])
+            for note in notes:
+                events = ", ".join(str(e) for e in note.get("events", [])) or "n/a"
+                lines.append(f"- {note.get('type')} (event {events}): {note.get('evidence')}")
+            lines.extend(["", "---", ""])
+
+        lines.extend([
             "## Trace Statistics",
             "",
         ])

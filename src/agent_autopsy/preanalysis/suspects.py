@@ -40,6 +40,9 @@ class PreAnalysisBundle:
     signals: list[Signal] = field(default_factory=list)
     hypotheses: list[Hypothesis] = field(default_factory=list)
     summary: str = ""
+    # Informational observations (e.g. optional metadata absent): shown in
+    # the report but never scored and never part of the findings exit gate.
+    notes: list[Signal] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -64,6 +67,15 @@ class PreAnalysisBundle:
                 for h in self.hypotheses
             ],
             "summary": self.summary,
+            "notes": [
+                {
+                    "type": n.type,
+                    "severity": n.severity,
+                    "evidence": n.evidence,
+                    "events": n.event_ids,
+                }
+                for n in self.notes
+            ],
         }
 
 
@@ -86,7 +98,9 @@ class RootCauseBuilder:
         signals = self._patterns_to_signals(patterns)
 
         # Collect signals from contract violations
-        violations = self.contract_validator.get_violations()
+        all_violations = self.contract_validator.get_violations()
+        violations = [v for v in all_violations if not v.informational]
+        notes = self._violations_to_signals([v for v in all_violations if v.informational])
         signals.extend(self._violations_to_signals(violations))
 
         # Generate hypotheses from signals
@@ -102,6 +116,7 @@ class RootCauseBuilder:
             signals=signals,
             hypotheses=hypotheses,
             summary=summary,
+            notes=notes,
         )
 
     def _patterns_to_signals(self, patterns: list[PatternResult]) -> list[Signal]:

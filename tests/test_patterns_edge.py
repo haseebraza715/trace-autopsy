@@ -137,10 +137,11 @@ class TestSummaryEdgeCases:
         ]
         trace = _build_trace(events, tools_available=["search"])
         bundle = RootCauseBuilder(trace).build()
-        # A contract "missing_metadata" LOW violation is always generated for
-        # tool calls without latency_ms/token_count, so summary must exist.
-        assert "Found" in bundle.summary
-        assert "issue" in bundle.summary
+        # Missing optional latency/token metadata is an informational note,
+        # not a finding, so it must not appear in the signal summary.
+        assert [n.type for n in bundle.notes] == ["contract_missing_metadata"] * 2
+        assert bundle.signals == []
+        assert bundle.summary == "No significant issues detected in trace."
 
     def test_empty_trace_summary(self) -> None:
         bundle = RootCauseBuilder(_build_trace([])).build()
