@@ -44,6 +44,31 @@ LIKELY_CAUSE: dict[str, str] = {
 }
 
 
+# A contract violation that restates a pattern finding on the same events.
+CONTRACT_COUNTERPART: dict[str, str] = {
+    "contract_unknown_tool": "hallucinated_tool",
+    "contract_invalid_input": "tool_contract_mismatch",
+    "contract_invalid_output": "tool_contract_mismatch",
+}
+
+
+def _duplicate_note(sig, signals) -> str | None:
+    """Label a contract signal whose events another finding already cites."""
+    counterpart = CONTRACT_COUNTERPART.get(sig.type)
+    events = set(sig.event_ids or [])
+    if not counterpart or not events:
+        return None
+    for other in signals:
+        if other.type == counterpart and events <= set(other.event_ids or []):
+            noun = "event" if len(events) == 1 else "events"
+            title = counterpart.replace("_", " ").title()
+            return (
+                f"- **Note:** Same {noun} as the {title} finding above; "
+                f"the health score counts each event once."
+            )
+    return None
+
+
 def _event_by_id(trace: Trace, event_id: int) -> TraceEvent | None:
     for ev in trace.events:
         if ev.event_id == event_id:
@@ -119,12 +144,14 @@ def render_deterministic_markdown(trace: Trace, preanalysis: PreAnalysisBundle) 
                 sig.type,
                 "Review the cited events and surrounding tool/LLM steps (heuristic).",
             )
+            note = _duplicate_note(sig, preanalysis.signals)
             lines.extend(
                 [
                     f"### {sig.type.replace('_', ' ').title()} ({sig.severity})",
                     "",
                     f"- **What:** {desc}",
                     f"- **Where (event IDs):** {where}",
+                    *([note] if note else []),
                     "",
                     "**Evidence (trace excerpts)**",
                     "",
