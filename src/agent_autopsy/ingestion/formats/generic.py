@@ -128,6 +128,8 @@ class GenericJSONParser(TraceParser):
         Precedence: an actual error payload (string/dict/list) marks the run
         failed even when a conflicting ``status`` field says otherwise; a
         numeric count field like ``errors: 0`` is not an error payload.
+        A missing, non-string, in-progress or unrecognised status is
+        ``UNKNOWN``: the trace does not prove the run completed.
         """
         for error_key in ["error", "exception"]:
             if data.get(error_key):
@@ -136,8 +138,10 @@ class GenericJSONParser(TraceParser):
             return TraceStatus.FAILED
 
         for key in ["status", "state", "result"]:
-            if key in data:
-                status = str(data[key]).lower()
+            if isinstance(data.get(key), str):
+                status = data[key].strip().lower()
+                if status in ["running", "in_progress", "pending", "started"]:
+                    return TraceStatus.UNKNOWN
                 if status in ["success", "completed", "done", "ok", "passed"]:
                     return TraceStatus.SUCCESS
                 if status in ["failed", "error", "failure", "exception"]:
@@ -149,7 +153,7 @@ class GenericJSONParser(TraceParser):
                 if status in ["cancelled", "canceled", "aborted", "interrupted"]:
                     return TraceStatus.CANCELLED
 
-        return TraceStatus.SUCCESS
+        return TraceStatus.UNKNOWN
 
     def _extract_environment(self, data: dict[str, Any]) -> EnvironmentInfo:
         """Extract environment info from various structures."""

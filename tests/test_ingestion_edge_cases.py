@@ -130,7 +130,7 @@ class TestMissingAndWeirdFields:
     def test_empty_dict_parses_with_defaults(self) -> None:
         trace = parse_trace_data({})
         assert trace.run_id
-        assert trace.status == TraceStatus.SUCCESS
+        assert trace.status == TraceStatus.UNKNOWN
         assert trace.events == []
 
     def test_events_not_a_list_ignored(self) -> None:

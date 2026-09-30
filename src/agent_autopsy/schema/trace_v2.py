@@ -25,6 +25,7 @@ class TraceStatus(str, Enum):
     TIMEOUT = "timeout"
     LOOP_DETECTED = "loop_detected"
     CANCELLED = "cancelled"
+    UNKNOWN = "unknown"  # missing, in-progress or unrecognised: not a verified completion
 
 
 class EventType(str, Enum):
