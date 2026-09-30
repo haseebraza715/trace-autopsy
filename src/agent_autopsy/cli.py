@@ -43,16 +43,9 @@ def _trace_has_findings(trace, preanalysis) -> bool:
     """Whether the run should be treated as having actionable findings (non-zero exit).
 
     A run with a recovered error but no detected signals exits cleanly; the
-    gate fires on detected signals, on a non-success status, or when a failed
-    run recorded an error summary.
+    gate fires only on detected signals or a non-success status.
     """
-    if preanalysis.signals:
-        return True
-    if trace.status != TraceStatus.SUCCESS:
-        return True
-    if getattr(trace.stats, "num_errors", 0) > 0 and trace.error_summary:
-        return True
-    return False
+    return bool(preanalysis.signals) or trace.status != TraceStatus.SUCCESS
 
 
 @app.command()
