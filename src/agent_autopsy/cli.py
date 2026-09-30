@@ -130,6 +130,12 @@ def analyze(
         autopsy analyze ./traces/run_001.json
         autopsy analyze ./traces/run_001.json -o report.md --artifacts ./patches/
     """
+    # Validate options before touching the trace file so bad flags fail fast.
+    fmt = format.lower().strip()
+    if fmt not in ("text", "markdown", "json"):
+        console.print(f"[red]Unknown format:[/red] {format} (use text, markdown, or json)")
+        raise typer.Exit(2)
+
     config = get_config()
     prev_skip = config.skip_embeddings
     prev_provider = config.llm_provider
@@ -137,12 +143,6 @@ def analyze(
         config.skip_embeddings = True
     if provider:
         config.llm_provider = provider.strip().lower()
-
-    # Validate options before touching the trace file so bad flags fail fast.
-    fmt = format.lower().strip()
-    if fmt not in ("text", "markdown", "json"):
-        console.print(f"[red]Unknown format:[/red] {format} (use text, markdown, or json)")
-        raise typer.Exit(2)
 
     exit_code = 0
     trace = None
