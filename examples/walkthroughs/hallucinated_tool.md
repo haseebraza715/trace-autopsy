@@ -1,6 +1,6 @@
 # Walkthrough: Hallucinated Tool
 
-Trace: `examples/traces/hallucinated_tool.json`
+Synthetic trace: `examples/traces/hallucinated_tool.json`
 
 ## Goal
 
@@ -9,8 +9,9 @@ Validate tool-allowlist and contract-failure diagnostics.
 ## What to run
 
 ```bash
+export AUTOPSY_NO_EMBEDDINGS=1
 python -m agent_autopsy.cli summary examples/traces/hallucinated_tool.json
-python -m agent_autopsy.cli analyze examples/traces/hallucinated_tool.json --no-llm -o /tmp/hallucinated_tool_report.md
+python -m agent_autopsy.cli analyze examples/traces/hallucinated_tool.json --no-llm --no-embeddings -o /tmp/hallucinated_tool_report.md
 ```
 
 ## Expected interpretation

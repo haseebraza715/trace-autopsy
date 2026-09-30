@@ -1,49 +1,13 @@
-# Demo Playbook
+# Run the CLI demo
 
-Use this script to demo TraceAutopsy in under 5 minutes.
-
-For the README hero asset (video + GIF) and how to regenerate it, see the [README](../README.md) demo section.
-
-## 1) Quick Summary
-
-Use sample trace: [`examples/traces/loop_failure.json`](../examples/traces/loop_failure.json)
+Complete the [offline setup](../README.md#install-and-run-offline), then run:
 
 ```bash
-python -m agent_autopsy.cli summary examples/traces/loop_failure.json
+bash scripts/demo/demo_body.sh
 ```
 
-Show:
+The script sets `AUTOPSY_NO_EMBEDDINGS=1` and analyzes with `--no-llm --no-embeddings`. It validates the synthetic hallucinated-tool trace, prints its failed status, score 77/100 and five findings, then prints fix suggestions. Analyze exits 1 for findings; the demo itself finishes with exit 0. Typing and reading pauses affect duration.
 
-- Run status
-- Event/tool/error counts
-- Framework/model metadata
+Inspect the [saved report](../examples/outputs/hallucinated_tool.md) and [loop comparison](../examples/outputs/loop_diff.txt). The health score is a heuristic summary and fewer detected patterns do not prove task success.
 
-## 2) Deterministic Analysis
-
-Analyze the same trace: [`examples/traces/loop_failure.json`](../examples/traces/loop_failure.json)
-
-```bash
-python -m agent_autopsy.cli analyze examples/traces/loop_failure.json --no-llm -o /tmp/demo_report.md
-```
-
-Show:
-
-- Pattern-driven diagnosis
-- Timeline and health score
-- Actionable fix recommendations
-
-## 3) MCP Interface
-
-```bash
-python -m agent_autopsy.mcp --transport stdio
-```
-
-Show:
-
-- MCP tools: `analyze_trace`, `detect_patterns`, `health_check`
-- MCP resources: recent traces, pattern catalog
-- MCP prompts: debug/health/compare/explain workflows
-
-## 4) Compare Two Runs
-
-Use MCP `compare_traces` or CLI summaries side-by-side to highlight improvements/regressions.
+The preserved [GIF](../assets/demo/demo.gif) and [video](../assets/demo/demo.mp4) are historical recordings of older scores. They are not current evidence. Recording new media and demonstrating optional MCP or UI features are deferred.

@@ -1,6 +1,6 @@
 # Curated Examples
 
-This folder contains starter traces and walkthroughs for evaluating TraceAutopsy quickly.
+This folder contains synthetic starter traces and walkthroughs for evaluating TraceAutopsy quickly.
 
 ## Traces
 
@@ -18,10 +18,13 @@ fix: run `autopsy diff` on them to see the failing-run patterns disappear.
 - [`walkthroughs/loop_failure.md`](walkthroughs/loop_failure.md)
 - [`walkthroughs/hallucinated_tool.md`](walkthroughs/hallucinated_tool.md)
 
-## Try It
+## Try it offline
 
 ```bash
+export AUTOPSY_NO_EMBEDDINGS=1
 python -m agent_autopsy.cli summary examples/traces/loop_failure.json
-python -m agent_autopsy.cli analyze examples/traces/loop_failure.json --no-llm -o /tmp/loop_report.md
-python -m agent_autopsy.mcp --transport stdio
+python -m agent_autopsy.cli analyze examples/traces/loop_failure.json --no-llm --no-embeddings -o /tmp/loop_report.md
+autopsy diff examples/traces/loop_failure.json examples/traces/loop_fixed.json
 ```
+
+See [current saved reports](outputs/) and the [README setup](../README.md). Analyze exits 1 for the failing examples. Fewer findings in the authored corrected trace do not prove real agent success.
