@@ -4,6 +4,7 @@ Agent Autopsy GUI - Streamlit Application
 A user-friendly interface for analyzing agent execution traces.
 """
 
+import html
 import json
 import logging
 import os
@@ -269,12 +270,12 @@ def _render_recent_files() -> None:
         with c1:
             st.markdown(
                 f'<div style="color:var(--aa-text);font-size:13px;font-weight:550;font-family:var(--aa-mono);">'
-                f"{trace_file.name}</div>",
+                f"{html.escape(trace_file.name)}</div>",
                 unsafe_allow_html=True,
             )
         with c2:
             st.markdown(
-                f'<div style="color:var(--aa-dim);font-size:12px;text-align:right;">{mtime}</div>',
+                f'<div style="color:var(--aa-dim);font-size:12px;text-align:right;">{html.escape(str(mtime))}</div>',
                 unsafe_allow_html=True,
             )
         with c3:
@@ -291,6 +292,38 @@ def _render_recent_files() -> None:
             _divider(".55rem 0")
 
 
+def _recent_report_markup(report: dict) -> dict[str, str]:
+    """Build the HTML fragments for one row of the recent-reports list.
+
+    Every value comes from the on-disk reports index, which is derived from
+    user-supplied traces, so each one is escaped before it reaches
+    ``unsafe_allow_html``.
+    """
+    run_id = html.escape(str(report.get("run_id", "Unknown"))[:42])
+    generated_at = html.escape(str(report.get("generated_at", "Unknown"))[:10])
+    signals = html.escape(str(report.get("signals", 0)))
+    hypotheses = html.escape(str(report.get("hypotheses", 0)))
+    status = str(report.get("status", "unknown"))
+    status_badge = theme.status_badge(
+        "success" if status.lower() in {"success", "complete"} else "neutral",
+        status,
+    )
+    return {
+        "run_id": (
+            '<div style="color:var(--aa-text);font-size:13px;font-weight:550;font-family:var(--aa-mono);">'
+            f"{run_id}</div>"
+        ),
+        "counts": (
+            f'<div style="color:var(--aa-dim);font-size:12px;">{signals} signals · {hypotheses} hypotheses</div>'
+        ),
+        "status": f'<div style="display:flex;justify-content:flex-end;">{status_badge}</div>',
+        "generated": (
+            '<div style="color:var(--aa-dim);font-size:11px;font-family:var(--aa-mono);">'
+            f"generated {generated_at}</div>"
+        ),
+    }
+
+
 def _render_recent_reports() -> None:
     theme.render_section_header("History", "Recent reports")
     reports = load_reports_index()[:5]
@@ -303,40 +336,18 @@ def _render_recent_reports() -> None:
         return
 
     for idx, report in enumerate(reports):
-        run_id = report.get('run_id', 'Unknown')
-        generated_at = report.get('generated_at', 'Unknown')[:10]
-        signals = report.get('signals', 0)
-        hypotheses = report.get('hypotheses', 0)
-        status = str(report.get('status', 'unknown'))
-        status_badge = theme.status_badge(
-            "success" if status.lower() in {"success", "complete"} else "neutral",
-            status,
-        )
+        markup = _recent_report_markup(report)
         c1, c2, c3, c4 = st.columns([4, 2, 1.4, 1])
         with c1:
-            st.markdown(
-                f'<div style="color:var(--aa-text);font-size:13px;font-weight:550;font-family:var(--aa-mono);">'
-                f"{run_id[:42]}</div>",
-                unsafe_allow_html=True,
-            )
+            st.markdown(markup["run_id"], unsafe_allow_html=True)
         with c2:
-            st.markdown(
-                f'<div style="color:var(--aa-dim);font-size:12px;">{signals} signals · {hypotheses} hypotheses</div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(markup["counts"], unsafe_allow_html=True)
         with c3:
-            st.markdown(
-                f'<div style="display:flex;justify-content:flex-end;">{status_badge}</div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(markup["status"], unsafe_allow_html=True)
         with c4:
-            if st.button("View", key=f"view_report_{idx}_{run_id}", width='stretch'):
+            if st.button("View", key=f"view_report_{idx}", width='stretch'):
                 st.switch_page("pages/05_Reports.py")
-        st.markdown(
-            f'<div style="color:var(--aa-dim);font-size:11px;font-family:var(--aa-mono);">'
-            f"generated {generated_at}</div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(markup["generated"], unsafe_allow_html=True)
         if idx < len(reports) - 1:
             _divider(".55rem 0")
 
