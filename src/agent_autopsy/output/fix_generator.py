@@ -89,6 +89,8 @@ class FixSuggestionGenerator:
         if signal.type.startswith("contract_"):
             if signal.type == "contract_missing_metadata":
                 return type(self)._fix_contract_missing_metadata
+            if signal.type == "contract_unknown_tool":
+                return type(self)._fix_contract_unknown_tool
             return type(self)._fix_tool_contract_mismatch
         return None
 
@@ -314,6 +316,28 @@ class FixSuggestionGenerator:
                 "    'parameters': {...},   # regenerate from the implementation\n"
                 "}\n"
                 "validate_call_against_schema(call, TOOL_SCHEMAS[call['name']])\n"
+            ),
+            event_ids=signal.event_ids,
+        )
+
+    def _fix_contract_unknown_tool(self, signal: Signal) -> FixSuggestion:
+        tool = self._guess_root_error_tool(signal.event_ids)
+        declared_tools = list(self.trace.env.tools_available)
+        declared = ", ".join(declared_tools) or "<none>"
+        allow_list = ", ".join(repr(name) for name in [*declared_tools, tool])
+        return FixSuggestion(
+            title=f"Correct the call to undeclared tool {tool} or add it to the tool allow-list",
+            category="tool",
+            rationale=(
+                f"{tool} is not in the declared tool set (declared: {declared}), so there is no "
+                "schema to regenerate; either the agent called the wrong tool or the allow-list is incomplete."
+            ),
+            patch_snippet=(
+                f"# Option A: the call is wrong - map {tool!r} to a declared tool and fix the prompt\n"
+                "# Option B: the tool is legitimate - declare it so calls are validated\n"
+                f"TOOLS_AVAILABLE = [{allow_list}]\n"
+                "if call['name'] not in TOOLS_AVAILABLE:\n"
+                "    raise ValueError(f\"undeclared tool: {call['name']}\")\n"
             ),
             event_ids=signal.event_ids,
         )

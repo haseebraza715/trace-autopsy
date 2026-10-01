@@ -108,5 +108,9 @@ class TestFullSignalCoverage:
         invalid_output = build("contract_invalid_output")[0]
         missing_metadata = build("contract_missing_metadata")[0]
         assert unknown.category == mismatch.category
+        assert "schema" in mismatch.title.lower()
+        assert "schema" not in unknown.title.lower()
+        assert "allow-list" in unknown.title
+        assert "schema" in invalid_output.title.lower()
         assert invalid_output.patch_snippet != ""
         assert "instrument" in missing_metadata.rationale.lower() or "latency" in missing_metadata.patch_snippet.lower()
