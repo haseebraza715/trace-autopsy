@@ -268,7 +268,7 @@ class OpenTelemetryParser(TraceParser):
         return EnvironmentInfo(
             agent_framework=framework,
             model=model,
-            tools_available=list(set(tools)),
+            tools_available=sorted(set(tools)),
             context_window_tokens=context_window_tokens,
         )
 
@@ -346,12 +346,22 @@ class OpenTelemetryParser(TraceParser):
 
             for key, value in attrs.items():
                 key_lower = key.lower()
-                if input_data is None and any(k in key_lower for k in ["input", "prompt", "query", "request"]):
+                # Numeric telemetry attrs (gen_ai.request.max_tokens etc.)
+                # share these keywords and must never become payloads.
+                if (
+                    input_data is None
+                    and isinstance(value, (str, dict, list))
+                    and any(k in key_lower for k in ["input", "prompt", "query", "request"])
+                ):
                     input_data = value
-                elif output_data is None and any(k in key_lower for k in ["output", "response", "result", "completion"]):
+                elif (
+                    output_data is None
+                    and isinstance(value, (str, dict, list))
+                    and any(k in key_lower for k in ["output", "response", "result", "completion"])
+                ):
                     output_data = value
                 if token_count is None and "token" in key_lower:
-                    if isinstance(value, (int, float, str)):
+                    if isinstance(value, (int, float, str)) and not isinstance(value, bool):
                         try:
                             token_count = int(float(value))
                         except (TypeError, ValueError):
@@ -460,14 +470,18 @@ class OpenTelemetryParser(TraceParser):
             if not span.get("parentSpanId"):
                 attrs = self._flatten_attributes(span.get("attributes", []))
                 for key, value in attrs.items():
-                    if any(k in key.lower() for k in ["output", "response", "result", "completion"]):
+                    if isinstance(value, (str, dict)) and any(
+                        k in key.lower() for k in ["output", "response", "result", "completion"]
+                    ):
                         return value
 
         # Try last span
         if spans:
             attrs = self._flatten_attributes(spans[-1].get("attributes", []))
             for key, value in attrs.items():
-                if any(k in key.lower() for k in ["output", "response", "completion"]):
+                if isinstance(value, (str, dict)) and any(
+                    k in key.lower() for k in ["output", "response", "completion"]
+                ):
                     return value
 
         return None

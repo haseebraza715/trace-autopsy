@@ -108,3 +108,33 @@ class TestPayload:
         data = json.loads(path.read_text())
         for key in ["report", "trace_summary", "preanalysis", "success", "error"]:
             assert key in data
+
+
+class TestStreamCacheBypass:
+    def test_stream_yields_cached_report_without_network(self, trace, monkeypatch):
+        """Streaming must serve warm cache entries without touching the wire."""
+        from agent_autopsy import api
+        from agent_autopsy.analysis.agent import AnalysisResult
+
+        def explode(*a, **k):
+            raise AssertionError("network stream invoked despite warm cache")
+
+        monkeypatch.setattr(
+            "agent_autopsy.analysis.llm_agent.run_analysis_stream", explode
+        )
+        result = AnalysisResult(
+            report="# cached narrative",
+            trace_summary={},
+            preanalysis={"signals": []},
+            success=True,
+        )
+        llm_cache.save_cached(trace, "test-model", result)
+
+        holder: dict = {}
+        chunks = list(
+            api.stream_llm_analysis_text(trace, holder, model="test-model")
+        )
+        assert chunks == ["# cached narrative"]
+        # load_cached round-trips through JSON, so compare by value.
+        assert holder["result"].report == "# cached narrative"
+        assert holder["result"].success

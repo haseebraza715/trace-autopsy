@@ -37,6 +37,21 @@ except ImportError:  # langchain/langgraph are optional (dev/llm extras)
 
 
 @pytest.fixture(autouse=True)
+def _no_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the developer's real .env out of the suite.
+
+    Config.from_env and Config.__post_init__ call load_dotenv, so a populated
+    .env in the repo root would override the defaults these tests assert on.
+    Tests that need env vars set them explicitly via monkeypatch."""
+    try:
+        import agent_autopsy.utils.config as config_module
+
+        monkeypatch.setattr(config_module, "load_dotenv", lambda *a, **k: False)
+    except ImportError:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _offline_test_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     """Offline + isolated global config for every test.
 

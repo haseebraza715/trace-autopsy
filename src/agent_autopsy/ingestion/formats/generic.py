@@ -9,7 +9,7 @@ import hashlib
 from datetime import datetime
 from typing import Any
 
-from agent_autopsy.ingestion.parser import TraceParser
+from agent_autopsy.ingestion.parser import TraceParser, first_non_none
 from agent_autopsy.schema import (
     EnvironmentInfo,
     EventError,
@@ -116,6 +116,10 @@ class GenericJSONParser(TraceParser):
                     return datetime.strptime(value.replace("+00:00", "Z"), fmt)
                 except ValueError:
                     continue
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                pass
         return None
 
     def _extract_status(self, data: dict[str, Any]) -> TraceStatus:
@@ -124,6 +128,8 @@ class GenericJSONParser(TraceParser):
         Precedence: an actual error payload (string/dict/list) marks the run
         failed even when a conflicting ``status`` field says otherwise; a
         numeric count field like ``errors: 0`` is not an error payload.
+        A missing, non-string, in-progress or unrecognised status is
+        ``UNKNOWN``: the trace does not prove the run completed.
         """
         for error_key in ["error", "exception"]:
             if data.get(error_key):
@@ -132,8 +138,10 @@ class GenericJSONParser(TraceParser):
             return TraceStatus.FAILED
 
         for key in ["status", "state", "result"]:
-            if key in data:
-                status = str(data[key]).lower()
+            if isinstance(data.get(key), str):
+                status = data[key].strip().lower()
+                if status in ["running", "in_progress", "pending", "started"]:
+                    return TraceStatus.UNKNOWN
                 if status in ["success", "completed", "done", "ok", "passed"]:
                     return TraceStatus.SUCCESS
                 if status in ["failed", "error", "failure", "exception"]:
@@ -145,7 +153,7 @@ class GenericJSONParser(TraceParser):
                 if status in ["cancelled", "canceled", "aborted", "interrupted"]:
                     return TraceStatus.CANCELLED
 
-        return TraceStatus.SUCCESS
+        return TraceStatus.UNKNOWN
 
     def _extract_environment(self, data: dict[str, Any]) -> EnvironmentInfo:
         """Extract environment info from various structures."""
@@ -197,7 +205,7 @@ class GenericJSONParser(TraceParser):
         return EnvironmentInfo(
             agent_framework=framework,
             model=model,
-            tools_available=list(set(tools)),
+            tools_available=sorted(set(tools)),
             context_window_tokens=context_window_tokens,
         )
 
@@ -257,15 +265,10 @@ class GenericJSONParser(TraceParser):
 
                 if start_event:
                     # Merge: use start's input, end's output/tokens/latency
-                    merged = {
-                        **start_event,
-                        "type": base_type,
-                        "output": raw.get("output") or start_event.get("output"),
-                        "latency_ms": raw.get("latency_ms") or start_event.get("latency_ms"),
-                        "token_count": raw.get("token_count") or start_event.get("token_count"),
-                        "tokens": raw.get("tokens") or start_event.get("tokens"),
-                        "error": raw.get("error") or start_event.get("error"),
-                    }
+                    merged = {**start_event, "type": base_type}
+                    for field in ("output", "latency_ms", "token_count", "tokens", "error"):
+                        if raw.get(field) is not None:
+                            merged[field] = raw[field]
                     # Preserve the end timestamp as the event timestamp
                     if raw.get("ts") or raw.get("timestamp"):
                         merged["timestamp"] = raw.get("timestamp") or raw.get("ts")
@@ -339,13 +342,11 @@ class GenericJSONParser(TraceParser):
             if not isinstance(raw_metadata, dict):
                 raw_metadata = {}
 
-            # ``or`` chains would treat a valid parent id of 0 as missing.
-            raw_parent = raw.get("parent_id")
-            if raw_parent is None:
-                raw_parent = raw.get("parentId")
+            raw_parent = first_non_none(raw, "parent_event_id", "parent_id", "parentId")
+            source_id = self._safe_parent_event_id(raw.get("event_id"))
 
             event = TraceEvent(
-                event_id=event_id,
+                event_id=source_id if source_id is not None else event_id,
                 parent_event_id=self._safe_parent_event_id(raw_parent),
                 span_id=raw.get("span_id") or raw.get("spanId"),
                 agent_id=(
@@ -358,10 +359,10 @@ class GenericJSONParser(TraceParser):
                 type=event_type,
                 role=role,
                 name=raw.get("name") or raw.get("tool") or raw.get("function") or raw.get("node"),
-                input=raw.get("input") or raw.get("args") or raw.get("content") or raw.get("query"),
-                output=raw.get("output") or raw.get("result") or raw.get("response"),
-                token_count=raw.get("token_count") or raw.get("tokens") or raw.get("tokenCount"),
-                latency_ms=raw.get("latency_ms") or raw.get("duration_ms") or raw.get("latency"),
+                input=first_non_none(raw, "input", "args", "content", "query"),
+                output=first_non_none(raw, "output", "result", "response"),
+                token_count=first_non_none(raw, "token_count", "tokens", "tokenCount"),
+                latency_ms=first_non_none(raw, "latency_ms", "duration_ms", "latency"),
                 timestamp=self._parse_timestamp(raw.get("timestamp") or raw.get("time") or raw.get("ts")),
                 error=error,
                 metadata=raw_metadata,

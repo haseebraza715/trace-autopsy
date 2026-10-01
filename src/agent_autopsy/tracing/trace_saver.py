@@ -4,7 +4,6 @@ Trace capture callback handler for LangChain/LangGraph.
 Captures agent execution events and saves them as machine-readable JSON traces.
 """
 
-import json
 import logging
 import os
 import re
@@ -18,6 +17,8 @@ from uuid import uuid4
 from langchain_core.agents import AgentAction, AgentFinish
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
+
+from agent_autopsy.utils.atomic import atomic_write_json
 
 # Secret keys pattern for redaction
 SECRET_KEYS_PATTERN = re.compile(
@@ -710,9 +711,8 @@ class TraceSaver(BaseCallbackHandler):
             filename = f"{timestamp}_{self.run_id}.json"
             path = self.config.trace_dir / filename
 
-        # Write trace
-        with open(path, "w") as f:
-            json.dump(self.to_dict(), f, indent=2, default=str)
+        # Atomic: a killed process must never leave a truncated trace.
+        atomic_write_json(path, self.to_dict())
 
         return path
 

@@ -109,11 +109,11 @@ class TestValidateCommand:
         assert proc.returncode == 0
         assert "Trace is valid" in proc.stdout
 
-    def test_validate_malformed_json_exits_1(self, tmp_path: Path) -> None:
+    def test_validate_malformed_json_exits_2(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.json"
         bad.write_text('{"run_id": ', encoding="utf-8")
         proc = _run("validate", str(bad))
-        assert proc.returncode == 1
+        assert proc.returncode == 2
         assert "Invalid" in proc.stdout or "Error" in proc.stdout
 
 
@@ -190,3 +190,87 @@ class TestModuleEntryPoints:
     def test_python_dash_m_agent_autopsy(self) -> None:
         proc = _run("config")
         assert proc.returncode == 0
+
+
+class TestAnalyzeExitContractOnCleanRunWithAuthLanguage:
+    def test_auth_prose_in_clean_trace_exits_zero(self, tmp_path: Path) -> None:
+        """Auth-related wording inside prompts/outputs of a healthy run must
+        not trip the findings gate (detector-level regression guard)."""
+        fixture = {
+            "run_id": "run_auth_prose_001",
+            "status": "success",
+            "start_time": "2024-01-15T11:00:00Z",
+            "end_time": "2024-01-15T11:00:30Z",
+            "model": "gpt-4",
+            "input": {"goal": "Explain how oauth authorization works"},
+            "events": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "Please explain how oauth authorization works",
+                    "timestamp": "2024-01-15T11:00:01Z",
+                },
+                {
+                    "type": "llm_call",
+                    "name": "gpt-4",
+                    "input": {"prompt": "explain how oauth authorization works"},
+                    "output": {"text": "oauth authorization uses grant flows"},
+                    "latency_ms": 120,
+                    "token_count": 40,
+                    "timestamp": "2024-01-15T11:00:02Z",
+                },
+                {
+                    "type": "tool_call",
+                    "name": "docs",
+                    "input": {"query": "oauth authorization code flow"},
+                    "output": {"excerpt": "authorization code grant"},
+                    "latency_ms": 90,
+                    "token_count": 20,
+                    "timestamp": "2024-01-15T11:00:03Z",
+                },
+            ],
+        }
+        path = tmp_path / "auth_prose_clean.json"
+        path.write_text(json.dumps(fixture))
+
+        proc = _run("analyze", str(path), "--no-llm", "--no-embeddings", "-q")
+        assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
+class TestParseErrorExitContract:
+    """Every trace-loading command exits 2 on parse failure, per the
+    documented contract: 0 clean, 1 findings, 2 tool/parse error."""
+
+    def _bad_file(self, tmp_path: Path) -> Path:
+        bad = tmp_path / "bad.json"
+        bad.write_text('{"run_id": ', encoding="utf-8")
+        return bad
+
+    def test_summary_parse_error_exits_2(self, tmp_path: Path) -> None:
+        proc = _run("summary", str(self._bad_file(tmp_path)))
+        assert proc.returncode == 2, proc.stdout
+
+    def test_fixes_parse_error_exits_2(self, tmp_path: Path) -> None:
+        proc = _run("fixes", str(self._bad_file(tmp_path)))
+        assert proc.returncode == 2, proc.stdout
+
+    def test_agent_flow_parse_error_exits_2(self, tmp_path: Path) -> None:
+        proc = _run("agent-flow", str(self._bad_file(tmp_path)))
+        assert proc.returncode == 2, proc.stdout
+
+
+class TestEmptyTraceContract:
+    def test_analyze_empty_trace_is_tool_error_not_clean(self, tmp_path: Path) -> None:
+        """A trace with zero events cannot prove a clean run; exiting 0
+        would let CI pass on garbage input."""
+        empty = tmp_path / "empty.json"
+        empty.write_text("{}", encoding="utf-8")
+        proc = _run("analyze", str(empty), "--no-llm", "--no-embeddings", "-q")
+        assert proc.returncode == 2, proc.stdout
+        assert "no events" in proc.stdout.lower()
+
+    def test_summary_empty_trace_exits_2(self, tmp_path: Path) -> None:
+        empty = tmp_path / "empty.json"
+        empty.write_text("{}", encoding="utf-8")
+        proc = _run("summary", str(empty))
+        assert proc.returncode == 2, proc.stdout

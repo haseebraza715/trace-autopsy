@@ -13,6 +13,7 @@ from typing import Any
 from agent_autopsy.analysis.agent import AnalysisResult
 from agent_autopsy.plugins import get_plugin_manager
 from agent_autopsy.schema import Trace
+from agent_autopsy.utils.atomic import aliases_source, atomic_write_text
 
 
 def markdown_to_plain(md: str) -> str:
@@ -211,7 +212,12 @@ class ReportGenerator:
         return sorted(list(events))
 
     def _calculate_health_score(self) -> int:
-        """Compute 0-100 health score from deterministic signals."""
+        """Compute 0-100 health score from deterministic signals.
+
+        An event's failure evidence costs once: signals are applied
+        heaviest-first and only their not-yet-claimed events earn the full
+        weight, so one root cause reported by two detectors cannot stack.
+        """
         score = 100
         severity_penalties = {
             "critical": 25,
@@ -220,10 +226,24 @@ class ReportGenerator:
             "low": 3,
         }
 
+        claimed: set[int] = set()
         signals = self.result.preanalysis.get("signals", [])
-        for signal in signals:
+        ordered = sorted(
+            signals,
+            key=lambda s: severity_penalties.get(str(s.get("severity", "low")).lower(), 5),
+            reverse=True,
+        )
+        for signal in ordered:
             severity = str(signal.get("severity", "low")).lower()
-            score -= severity_penalties.get(severity, 5)
+            weight = severity_penalties.get(severity, 5)
+            events = [int(e) for e in signal.get("events", [])]
+            if events:
+                new_events = sum(1 for e in events if e not in claimed)
+                penalty = weight * new_events / len(events)
+                claimed.update(events)
+            else:
+                penalty = float(weight)
+            score -= int(round(penalty))
 
         impacted_events = set(self._extract_evidence_events())
         total_events = max(1, len(self.trace.events))
@@ -245,7 +265,12 @@ class ReportGenerator:
             "",
             "## Summary",
             "",
-            f"- **Status:** {report.status}",
+        ]
+
+        if "**Status:**" not in report.summary:
+            lines.append(f"- **Status:** {report.status}")
+
+        lines.extend([
             f"- **Health Score:** {report.health_score}/100",
             f"- **Confidence:** {report.confidence:.0%}",
             "",
@@ -255,7 +280,7 @@ class ReportGenerator:
             "",
             "## Timeline",
             "",
-        ]
+        ])
 
         for item in report.timeline:
             lines.append(f"- {item}")
@@ -304,6 +329,22 @@ class ReportGenerator:
             "",
             "---",
             "",
+        ])
+
+        notes = report.preanalysis.get("notes", [])
+        if notes:
+            lines.extend([
+                "## Informational Notes",
+                "",
+                "_Not scored and not counted as findings; they do not affect the exit code._",
+                "",
+            ])
+            for note in notes:
+                events = ", ".join(str(e) for e in note.get("events", [])) or "n/a"
+                lines.append(f"- {note.get('type')} (event {events}): {note.get('evidence')}")
+            lines.extend(["", "---", ""])
+
+        lines.extend([
             "## Trace Statistics",
             "",
         ])
@@ -321,14 +362,31 @@ class ReportGenerator:
 
         # Full narrative: LLM synthesis and/or deterministic markdown from run_analysis_without_llm
         if report.raw_report:
-            section_title = (
-                "## Deterministic analysis (no LLM)"
-                if "deterministic" in report.raw_report.lower()
-                else "## Detailed analysis"
-            )
-            lines.extend(["---", "", section_title, "", report.raw_report])
+            if "# Autopsy Report (deterministic)" in report.raw_report:
+                # The synthesized sections above already cover the
+                # deterministic doc's Summary and Hypotheses; only its
+                # per-finding detail is unique.
+                lines.extend(["---", "", *self._extract_findings_section(report.raw_report)])
+            else:
+                section_title = (
+                    "## Deterministic analysis (no LLM)"
+                    if "deterministic" in report.raw_report.lower()
+                    else "## Detailed analysis"
+                )
+                lines.extend(["---", "", section_title, "", report.raw_report])
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _extract_findings_section(narrative: str) -> list[str]:
+        """Pull the Findings block out of the deterministic markdown."""
+        lines = narrative.splitlines()
+        try:
+            start = next(i for i, line in enumerate(lines) if line.strip() == "## Findings")
+        except StopIteration:
+            return []
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+        return [line for line in lines[start + 1 : end] if line.strip()]
 
     def to_json(self) -> dict[str, Any]:
         """Generate JSON report."""
@@ -347,6 +405,9 @@ class ReportGenerator:
             "evidence_events": report.evidence_events,
             "trace_summary": report.trace_summary,
             "preanalysis": report.preanalysis,
+            # Markdown keeps the LLM narrative or deterministic findings
+            # detail; JSON consumers get the same content under this key.
+            "detailed_analysis": report.raw_report,
         }
 
     def render(self, format_name: str = "markdown") -> str | dict[str, Any]:
@@ -373,7 +434,9 @@ class ReportGenerator:
 
         raise ValueError(f"Unknown report format: {format_name}")
 
-    def save(self, path: str | Path, format: str = "markdown") -> Path:
+    def save(
+        self, path: str | Path, format: str = "markdown", *, source_path: str | Path | None = None
+    ) -> Path:
         """Save report to file."""
         path = Path(path)
 
@@ -392,7 +455,9 @@ class ReportGenerator:
                 elif format == "text":
                     path = path.with_suffix(".txt")
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        if aliases_source(path, source_path):
+            raise ValueError("Report output must not overwrite the input trace")
+
+        atomic_write_text(path, content)
 
         return path

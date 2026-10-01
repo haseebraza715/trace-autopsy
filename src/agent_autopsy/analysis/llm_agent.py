@@ -84,7 +84,7 @@ class AnalysisAgent:
         if init_chat_model is not None:
             if provider == "openrouter":
                 return init_chat_model(
-                    f"openai:{self.model_name}",
+                    self.model_name,
                     model_provider="openai",
                     api_key=cfg.openrouter_api_key or None,
                     base_url=cfg.openrouter_base_url,
@@ -96,7 +96,7 @@ class AnalysisAgent:
                 key = cfg.openai_api_key or os.getenv("OPENAI_API_KEY", "")
                 base = cfg.openai_api_base or os.getenv("OPENAI_API_BASE") or None
                 return init_chat_model(
-                    f"openai:{self.model_name}",
+                    self.model_name,
                     model_provider="openai",
                     api_key=key or None,
                     base_url=base,

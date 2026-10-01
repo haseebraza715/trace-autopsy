@@ -20,6 +20,11 @@ from agent_autopsy.schema import Trace
 logger = logging.getLogger(__name__)
 
 
+def first_non_none(data: dict[str, Any], *keys: str) -> Any:
+    """Select aliases without discarding recorded empty or zero values."""
+    return next((data[key] for key in keys if data.get(key) is not None), None)
+
+
 class TraceParser(ABC):
     """Abstract base class for trace parsers."""
 

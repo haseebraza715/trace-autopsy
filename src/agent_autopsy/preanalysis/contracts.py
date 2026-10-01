@@ -147,6 +147,7 @@ class ContractValidator:
                     severity=ViolationSeverity.LOW,
                     message=f"Missing optional metadata: {', '.join(missing_metadata)}",
                     suggested_fix="Track latency and token counts for better analysis",
+                    informational=True,
                 )
             )
 

@@ -43,16 +43,9 @@ def _trace_has_findings(trace, preanalysis) -> bool:
     """Whether the run should be treated as having actionable findings (non-zero exit).
 
     A run with a recovered error but no detected signals exits cleanly; the
-    gate fires on detected signals, on a non-success status, or when a failed
-    run recorded an error summary.
+    gate fires only on detected signals or a non-success status.
     """
-    if preanalysis.signals:
-        return True
-    if trace.status != TraceStatus.SUCCESS:
-        return True
-    if getattr(trace.stats, "num_errors", 0) > 0 and trace.error_summary:
-        return True
-    return False
+    return bool(preanalysis.signals) or trace.status != TraceStatus.SUCCESS
 
 
 @app.command()
@@ -130,6 +123,12 @@ def analyze(
         autopsy analyze ./traces/run_001.json
         autopsy analyze ./traces/run_001.json -o report.md --artifacts ./patches/
     """
+    # Validate options before touching the trace file so bad flags fail fast.
+    fmt = format.lower().strip()
+    if fmt not in ("text", "markdown", "json"):
+        console.print(f"[red]Unknown format:[/red] {format} (use text, markdown, or json)")
+        raise typer.Exit(2)
+
     config = get_config()
     prev_skip = config.skip_embeddings
     prev_provider = config.llm_provider
@@ -137,12 +136,6 @@ def analyze(
         config.skip_embeddings = True
     if provider:
         config.llm_provider = provider.strip().lower()
-
-    # Validate options before touching the trace file so bad flags fail fast.
-    fmt = format.lower().strip()
-    if fmt not in ("text", "markdown", "json"):
-        console.print(f"[red]Unknown format:[/red] {format} (use text, markdown, or json)")
-        raise typer.Exit(2)
 
     exit_code = 0
     trace = None
@@ -215,6 +208,7 @@ def analyze(
                     result_holder,
                     model=model,
                     verbose=verbose,
+                    use_cache=not no_cache,
                 ):
                     sys.stdout.write(chunk)
                     sys.stdout.flush()
@@ -249,7 +243,11 @@ def analyze(
 
         if output:
             save_fmt = fmt if fmt in ("json", "markdown", "text") else "markdown"
-            saved_path = report_generator.save(output, format=save_fmt)
+            try:
+                saved_path = report_generator.save(output, format=save_fmt, source_path=trace_file)
+            except (OSError, ValueError) as exc:
+                console.print(f"[red]Error saving report:[/red] {exc}")
+                raise typer.Exit(2) from exc
             if not quiet:
                 console.print(f"\n[green]Report saved to:[/green] {saved_path}")
         else:
@@ -264,7 +262,11 @@ def analyze(
 
         if artifacts:
             artifact_generator = ArtifactGenerator(trace, preanalysis)
-            saved_artifacts = artifact_generator.save_all(artifacts)
+            try:
+                saved_artifacts = artifact_generator.save_all(artifacts, source_path=trace_file)
+            except (OSError, ValueError) as exc:
+                console.print(f"[red]Error saving artifacts:[/red] {exc}")
+                raise typer.Exit(2) from exc
             if not quiet:
                 console.print(f"\n[green]Artifacts saved to:[/green] {artifacts}")
                 for path in saved_artifacts:
@@ -272,7 +274,7 @@ def analyze(
 
         if not quiet:
             console.print("\n")
-            _print_result_summary(result, preanalysis)
+            _print_result_summary(result, preanalysis, trace)
 
         if _trace_has_findings(trace, preanalysis):
             exit_code = 1
@@ -314,11 +316,11 @@ def summary(
         trace = api.load_trace(trace_file)
     except (ParseError, SchemaValidationError, PluginError) as e:
         console.print(f"[red]Error parsing trace:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
     except Exception:
         logger.exception("Unexpected error parsing trace")
         console.print("[red]Error parsing trace (see logs for details).[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
 
     summary = api.trace_summary(trace)
     _print_trace_summary(summary)
@@ -361,11 +363,11 @@ def validate(
 
     except (ParseError, SchemaValidationError, PluginError) as e:
         console.print(f"[red]Invalid trace file:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
     except Exception:
         logger.exception("Unexpected error validating trace")
         console.print("[red]Invalid trace file (see logs for details).[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
 
 
 @app.command()
@@ -606,11 +608,11 @@ def fixes(
         trace = api.load_trace(trace_file)
     except (ParseError, SchemaValidationError, PluginError) as e:
         console.print(f"[red]Error parsing trace:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
     except Exception:
         logger.exception("Unexpected error parsing trace for fixes")
         console.print("[red]Error parsing trace (see logs for details).[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
 
     preanalysis = api.run_preanalysis(trace)
     suggestions = FixSuggestionGenerator(trace, preanalysis).to_dict()
@@ -641,11 +643,11 @@ def agent_flow(
         trace = api.load_trace(trace_file)
     except (ParseError, SchemaValidationError, PluginError) as e:
         console.print(f"[red]Error parsing trace:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
     except Exception:
         logger.exception("Unexpected error parsing trace for agent-flow")
         console.print("[red]Error parsing trace (see logs for details).[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
 
     agent_ids = trace.get_agent_ids()
     handoffs = trace.get_agent_handoffs()
@@ -719,16 +721,23 @@ def _print_preanalysis_summary(preanalysis):
     _print_preanalysis(preanalysis)
 
 
-def _print_result_summary(result, preanalysis):
-    """Print analysis result summary."""
-    status = "[green]SUCCESS[/green]" if result.success else "[red]FAILED[/red]"
+def _print_result_summary(result, preanalysis, trace):
+    """Print analysis result summary.
+
+    ``result.success`` only says the analysis itself ran; the run's own
+    outcome is the trace status, shown separately so neither reads as the other.
+    """
+    completed = "[green]yes[/green]" if result.success else "[red]no[/red]"
+    clean = trace.status == TraceStatus.SUCCESS
+    trace_status = f"[green]{trace.status.value}[/green]" if clean else f"[red]{trace.status.value}[/red]"
     console.print(
         Panel.fit(
-            f"Analysis Status: {status}\n"
+            f"Analysis completed: {completed}\n"
+            f"Trace status: {trace_status}\n"
             f"Signals Found: {len(preanalysis.signals)}\n"
             f"Hypotheses Generated: {len(preanalysis.hypotheses)}",
-            title="Analysis Complete",
-            border_style="green" if result.success else "red",
+            title="Analysis Summary",
+            border_style="green" if result.success and not _trace_has_findings(trace, preanalysis) else "red",
         )
     )
 
@@ -879,14 +888,18 @@ def autopsy_run(
             # Generate and save the report
             report_gen = api.generate_report(trace, result)
             output_format = "json" if output.suffix.lower() == ".json" else "markdown"
-            output = report_gen.save(output, format=output_format)
+            try:
+                output = report_gen.save(output, format=output_format, source_path=trace_file)
+            except (OSError, ValueError) as exc:
+                console.print(f"[red]Error saving report:[/red] {exc}")
+                raise typer.Exit(2) from exc
 
             progress.update(task, description="Report generated")
 
         console.print(f"\n[green]Report saved to:[/green] {output}")
 
         # Print result summary
-        _print_result_summary(result, preanalysis)
+        _print_result_summary(result, preanalysis, trace)
 
         # Exit codes: 1 = findings, 0 = clean (match `analyze`)
         if _trace_has_findings(trace, preanalysis):

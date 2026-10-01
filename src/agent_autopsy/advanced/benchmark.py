@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agent_autopsy.ingestion import TraceNormalizer, parse_trace_file
+from agent_autopsy.api import load_trace
 from agent_autopsy.preanalysis import PatternDetector
 from agent_autopsy.schema import Trace
 
@@ -99,8 +99,7 @@ def benchmark_trace_directory(
 
 def _load_trace(path: str | Path) -> Trace | None:
     try:
-        trace = parse_trace_file(path)
-        return TraceNormalizer.normalize(trace)
+        return load_trace(path)
     except Exception:
         logger.debug("Benchmark skipped unreadable trace %s", path, exc_info=True)
         return None

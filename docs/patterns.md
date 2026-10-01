@@ -67,8 +67,7 @@ For each detector: **what it catches**, **false-positive risk**, **tuning**.
 
 ### `auth_permission_failure`
 
-- **Catches:** Regex on auth/forbidden/401/403 style messages.
-- **False positives:** User content mentioning “unauthorized” in a benign way.
+- **Catches:** Regex on auth/forbidden/401/403 style messages, gated on failure evidence (any matched event errored, the run is not a success, or an error summary exists) — auth language inside healthy-run prompts/outputs stays silent.
 - **Tune:** `_AUTH_PERMISSION_RE` and `_AUTH_STATUS_CODE_RE` in `patterns.py`.
 
 ### `timeout_pattern`

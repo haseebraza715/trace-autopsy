@@ -1,68 +1,88 @@
 # TraceAutopsy
 
-> Deterministic, fully offline forensics for AI-agent traces: detects loops, retry storms, and hallucinations without an LLM.
+Read a recorded agent trace, find suspected failure patterns, and inspect the events behind each finding. Compare a failing trace with a corrected example without uploading either file.
 
-<p align="center"><img src="assets/demo/demo.gif" alt="Demo" width="720"></p>
+This release candidate leads with the deterministic offline CLI. The four bundled examples are synthetic. Optional LLM interpretation, embedding-based detection, live framework integrations, and the Streamlit UI are preserved but outside this release's verification claim.
 
-Watch the full demo: [demo.mp4](assets/demo/demo.mp4)
+## Install and run offline
 
-## Why this exists
+Requires Python **3.10 or newer**. Local verification used Python 3.11.16 on macOS; the other supported versions have not been rechecked for this candidate.
 
-Agent traces are huge, unstructured JSON blobs, and debugging a failed run means reading logs by hand or uploading the trace to a hosted dashboard. TraceAutopsy is a CLI that turns any trace file into a deterministic failure report with trace-backed evidence, and exits with a code CI can gate on.
-
-## What it does
-
-- **Ingests** LangGraph, LangChain, OpenTelemetry, and generic JSON traces into one event schema
-- **Detects** failure patterns deterministically, offline: infinite loops, retry storms, empty responses, error cascades, hallucinated tools, timeouts, goal drift, stale context, and more
-- **Reports** every finding with trace-backed evidence and a health score, as text, markdown, or JSON, and generates patch suggestions (error boundaries, prompt hardening) from them
-- **Gates** with exit codes: `0` clean, `1` findings detected, `2` tool/parse error
-- **Compares** any two runs with `autopsy diff` to prove a fix changed behavior
-
-## Architecture
-
-- `ingestion/parser.py` auto-detects the format and picks a parser (LangGraph, LangChain, OpenTelemetry, generic)
-- `ingestion/normalizer.py` + `schema/trace_v2.py` map every format onto a single event model
-- `preanalysis/patterns.py` runs the 12+ deterministic detectors (loops, retry storms, cascades, hallucinated tools, ...)
-- `preanalysis/contracts.py` validates tool calls against the declared tool allow-list
-- `output/` renders the report and generates fix suggestions
-- `api.py` is the facade shared by the CLI, Streamlit UI, and MCP server
-
-## Quick start
+These instructions target the `fix/truthful-deterministic-analysis` branch, which contains the reviewed release candidate. They do not describe `main`, which still lags this branch.
 
 ```bash
-pip install -e ".[dev]"
+git clone --branch fix/truthful-deterministic-analysis https://github.com/haseebraza715/trace-autopsy.git
+cd trace-autopsy
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
 
+export AUTOPSY_NO_EMBEDDINGS=1
 autopsy validate examples/traces/hallucinated_tool.json
-autopsy analyze examples/traces/hallucinated_tool.json
+autopsy analyze examples/traces/hallucinated_tool.json --no-llm --no-embeddings
 autopsy fixes examples/traces/hallucinated_tool.json
 ```
 
-No API keys, network access, or model downloads are required. `examples/traces/` ships four traces: a clean run, a loop failure, the same loop after a fix, and a hallucinated-tool failure.
+Use an installed Python >=3.10 if `python3.11` is unavailable. On Windows, activate with `.venv\Scripts\activate` and set `$env:AUTOPSY_NO_EMBEDDINGS="1"` in PowerShell. Clone and installation require network access unless you already have the source and dependency wheels. The base install above needs no optional model packages. Do not create a `.env` or configure a provider for this walkthrough.
 
-## Demo
+After installation these commands need no network, credentials, or model downloads, including with an empty model cache. `--no-llm` disables provider calls for analyze. `--no-embeddings` selects lexical goal-drift detection for analyze; `AUTOPSY_NO_EMBEDDINGS=1` applies the same setting to diff and the whole session. The global defaults remain unchanged. Without these controls, an installed embedding extra may load or download a model.
+
+Expected exits are `0` for validate, `1` for analyze, and `0` for fixes. Analyze's `1` means findings or a non-success run status, not an installation failure. `2` means a tool or parse error. Fixes prints template suggestions; it does not apply them.
+
+## Read the result
+
+[Saved hallucinated-tool report](examples/outputs/hallucinated_tool.md) shows status `failed`, health score **77/100**, and five findings: `empty_response`, `error_cascade`, `hallucinated_tool`, and two `contract_unknown_tool` findings for separate invalid calls. Findings cite event IDs and trace excerpts.
+
+The health score is a heuristic summary of detector findings, not a calibrated probability, task success rate, or safety guarantee. The [scoring code](src/agent_autopsy/output/report.py) starts at 100, applies severity penalties with overlap damping, then subtracts an evidence-coverage penalty. Run status is separate: a failed run can still score 77. A score of 100 means these detectors found no penalized signals; it does not establish that the task succeeded. The report's confidence field is also not a measured accuracy rate.
+
+## Compare a failing trace with a corrected example
+
+Keep `AUTOPSY_NO_EMBEDDINGS=1` set for diff.
 
 ```bash
-bash scripts/demo/demo_body.sh    # run the live demo (takes ~30s, fully offline)
-bash scripts/demo/record.sh       # regenerate the video/GIF assets (needs asciinema, agg, MEDIA_VENV)
+autopsy analyze examples/traces/loop_failure.json --no-llm --no-embeddings
+autopsy diff examples/traces/loop_failure.json examples/traces/loop_fixed.json
 ```
 
-The demo walks a broken trace through the pipeline: `validate` proves it is well-formed, `summary` shows the run stats, `analyze` emits a deterministic diagnosis (health score `24/100`, five findings including `hallucinated_tool`) and exits `1`, then `fixes` prints concrete patch suggestions.
+The [failing loop report](examples/outputs/loop_failure.md) has status `failed`, score **59/100**, and four patterns: `empty_response`, `error_cascade`, `infinite_loop`, and `timeout_pattern`. The [corrected report](examples/outputs/loop_fixed.md) has status `success`, score **100/100**, and no detected patterns. The [saved diff](examples/outputs/loop_diff.txt) shows those four patterns only in the failing example. These are authored traces demonstrating detector behavior, not evidence of a real agent succeeding after a fix.
 
-## Technical decisions
+The fourth example, [successful_run](examples/outputs/successful_run.md), also scores 100 with no patterns. See the [example index](examples/README.md) for inputs and walkthroughs.
 
-- **Deterministic-first, LLM optional.** All detectors are pure functions over the event stream (`preanalysis/patterns.py`), so the core path needs no network and is reproducible. LLM root-cause narratives are an opt-in extra: the CLI falls back to deterministic mode when no API key is configured, so it never silently depends on a paid service.
-- **One normalized event model for four formats.** Every parser emits the same `Trace`/`Event` schema, so all detectors, reports, and the diff engine work identically on traces from LangGraph, LangChain, OpenTelemetry, or arbitrary JSON, and a plugin can extend the set.
-- **Retry-storm clustering uses a chained time window.** Each candidate event must fall within the window of the last event already in the cluster, so a long chain of retries spaced within the window is caught as one storm instead of being split below the detection threshold.
-- **Atomic LLM-cache writes.** Cached analysis results are written to a `.tmp` file and renamed into place, so a crashed run never leaves a half-written cache entry that poisons later analyses.
+## Run the demo
 
-## Validation
+```bash
+bash scripts/demo/demo_body.sh
+```
 
-278 tests pass (`pytest`), and the same suite plus ruff and a labeled detector-corpus eval run in CI: ![tests](https://github.com/haseebraza715/trace-autopsy/actions/workflows/tests.yml/badge.svg)
+The script uses the same offline controls and prints validate, analyze, and fixes output. It includes typing and reading pauses, so its duration depends on the machine. The [historical GIF](assets/demo/demo.gif) and [historical video](assets/demo/demo.mp4) show an older scoring implementation, including 24/100. They remain archived references, not current-output evidence. New recordings are deferred.
 
-## Limitations
+## Follow the implementation
 
-- Deterministic detectors are heuristics, not proofs: they can produce false positives, and quiet failures can slip through; reports describe what the trace contains, so they cannot catch bugs that left no trace behind. A labeled corpus (`scripts/eval_detectors.py`) guards against regressions in CI.
-- Goal-drift detection with semantic embeddings requires `sentence-transformers`, which downloads a model on first use; without it the same detector falls back to lexical overlap only.
-- LLM-assisted analysis needs a provider API key and sends the normalized trace (not the raw file) to the model. The deterministic path never does.
-- Built-in parsers cover the four common formats; anything else needs a plugin parser or the generic fallback, which may lose fidelity.
-- Fix suggestions are templates and rationale, not auto-applied patches.
+1. [Parser](src/agent_autopsy/ingestion/parser.py) selects a reader for generic JSON, LangGraph, LangChain, or OpenTelemetry shapes.
+2. [Normalizer](src/agent_autopsy/ingestion/normalizer.py) maps input onto the [Trace/Event schema](src/agent_autopsy/schema/trace_v2.py).
+3. [PatternDetector](src/agent_autopsy/preanalysis/patterns.py) checks the event stream; [tool contracts](src/agent_autopsy/preanalysis/contracts.py) check declared tool names.
+4. [Deterministic renderer](src/agent_autopsy/output/deterministic_report.py) cites evidence. [ReportGenerator](src/agent_autopsy/output/report.py) adds the score and exports text, Markdown, or JSON.
+5. [CLI](src/agent_autopsy/cli.py) prints output and chooses an exit code. [api.py](src/agent_autopsy/api.py) provides the shared pipeline used by the CLI and optional interfaces.
+
+See [patterns](docs/patterns.md) for detector descriptions and [architecture](docs/architecture.md) for more detail. Format support in code does not establish fidelity on every real framework export.
+
+## Verify the detector corpus
+
+For development verification only, install the heavier extras and run existing checks:
+
+```bash
+python -m pip install -e ".[dev]"
+export AUTOPSY_NO_EMBEDDINGS=1
+python scripts/eval_detectors.py --json-out /tmp/detector-eval.json
+python -m pytest -q
+ruff check src scripts tests
+```
+
+The [manifest](tests/fixtures/real_traces/_manifest.yaml) has 30 entries, of which 29 are evaluated and one is excluded. The lexical-backend regression check currently reports 45 true-positive pattern labels, 0 false positives, and 0 false negatives. These are corpus-relative counts, not general detector accuracy or 45 independent traces. Labels are hand-specified for fixture scenarios; there is no held-out production benchmark here.
+
+Despite the directory name `real_traces`, provenance varies. Scenario generators in [generate_test_traces.py](scripts/generate_test_traces.py) and [generate_more_traces.py](scripts/generate_more_traces.py) establish synthetic generation mechanisms. They do not establish the origin of every checked-in file; files without a verified origin remain of unknown provenance. The directory name alone is not evidence of real user runs.
+
+## Limits
+
+Detectors can produce false positives and miss quiet failures or failures absent from the trace. Fix suggestions need review. Optional embeddings require `sentence-transformers` and may download weights on first use. Optional LLM analysis needs provider configuration and can send normalized traces to that provider. Neither optional path, the UI, nor live integrations is verified by the offline examples above. Recovery branches remain preserved for separate review.

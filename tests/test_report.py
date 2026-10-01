@@ -4,6 +4,7 @@ from datetime import datetime
 
 from agent_autopsy.analysis.agent import AnalysisResult
 from agent_autopsy.output import ReportGenerator
+from agent_autopsy.output.deterministic_report import render_deterministic_markdown
 from agent_autopsy.schema import (
     EnvironmentInfo,
     EventType,
@@ -86,3 +87,103 @@ class TestReportGenerator:
 
         assert any("max_iterations" in item for item in report.fix_recommendations["code"])
         assert any("401/403" in item for item in report.fix_recommendations["ops"])
+
+
+class TestReportDeduplication:
+    """The synthesized report must not embed a second full report body."""
+
+    def _result_with_deterministic_narrative(self):
+        from agent_autopsy.preanalysis.suspects import RootCauseBuilder
+
+        trace = _trace_with_events()
+        bundle = RootCauseBuilder(trace).build()
+        result = AnalysisResult(
+            report=render_deterministic_markdown(trace, bundle),
+            success=True,
+            error=None,
+            preanalysis=bundle.to_dict(),
+            trace_summary=trace.calculate_stats().__dict__,
+        )
+        return ReportGenerator(trace, result)
+
+    def test_markdown_contains_single_h1(self):
+        gen = self._result_with_deterministic_narrative()
+        md = gen.to_markdown()
+        h1s = [line for line in md.splitlines() if line.startswith("# Autopsy Report")]
+        assert len(h1s) == 1, h1s
+
+    def test_status_line_appears_once(self):
+        gen = self._result_with_deterministic_narrative()
+        md = gen.to_markdown()
+        status_lines = [line for line in md.splitlines() if line.startswith("- **Status:**")]
+        assert len(status_lines) == 1, status_lines
+
+    def test_findings_detail_is_kept(self):
+        """Per-finding detail is the deterministic narrative's unique section."""
+        gen = self._result_with_deterministic_narrative()
+        md = gen.to_markdown()
+        assert "**Likely cause" in md
+        assert md.count("## Findings") == 0
+
+
+class TestHealthScoreOverlapDamping:
+    """Evidence cited by multiple signals must not stack penalties."""
+
+    def _gen(self, signals):
+        trace = _trace_with_events()
+        return ReportGenerator(
+            trace,
+            AnalysisResult(
+                report="",
+                success=True,
+                preanalysis={"signals": signals},
+                trace_summary=trace.calculate_stats().__dict__,
+            ),
+        )
+
+    def test_duplicate_evidence_does_not_stack_full_penalties(self):
+        same_event = [
+            {"type": "hallucinated_tool", "severity": "high", "events": [1]},
+            {"type": "contract_unknown_tool", "severity": "high", "events": [1]},
+        ]
+        # one high penalty, then coverage: 1 of 3 events -> int(20/3)=6
+        assert self._gen(same_event)._calculate_health_score() == 100 - 15 - 6
+
+    def test_distinct_events_still_stack(self):
+        distinct = [
+            {"type": "a", "severity": "high", "events": [1]},
+            {"type": "b", "severity": "medium", "events": [2]},
+        ]
+        # both stack, coverage: 2 of 3 events -> int(40/3)=13
+        assert self._gen(distinct)._calculate_health_score() == 100 - 15 - 8 - 13
+
+    def test_partial_overlap_pays_only_for_new_events(self):
+        partial = [
+            {"type": "cascade", "severity": "critical", "events": [0, 1, 2]},
+            {"type": "storm", "severity": "high", "events": [1, 2]},
+        ]
+        # critical claims all three; storm has no new events left. Coverage 3/3 -> 20.
+        assert self._gen(partial)._calculate_health_score() == 100 - 25 - 20
+
+    def test_eventless_signals_keep_full_weight(self):
+        signals = [{"type": "goal_drift", "severity": "medium", "events": []}]
+        assert self._gen(signals)._calculate_health_score() == 100 - 8 - 0
+
+
+class TestJsonNarrativeParity:
+    def test_json_carries_the_detailed_narrative(self):
+        trace = _trace_with_events()
+        from agent_autopsy.preanalysis.suspects import RootCauseBuilder
+
+        bundle = RootCauseBuilder(trace).build()
+        gen = ReportGenerator(
+            trace,
+            AnalysisResult(
+                report=render_deterministic_markdown(trace, bundle),
+                success=True,
+                preanalysis=bundle.to_dict(),
+                trace_summary=trace.calculate_stats().__dict__,
+            ),
+        )
+        payload = gen.to_json()
+        assert payload["detailed_analysis"].startswith("# Autopsy Report")

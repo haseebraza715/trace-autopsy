@@ -9,6 +9,7 @@ import json
 import logging
 import math
 import re
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum
@@ -79,6 +80,15 @@ class PatternDetector:
 
     def __init__(self, trace: Trace):
         self.trace = trace
+        self._signature_cache: dict[int, str | None] = {}
+        self._loops_cache: dict[int, list[PatternResult]] = {}
+
+    def _signature(self, event: TraceEvent) -> str | None:
+        """Memoized tool+input hash; detectors re-hash the same events."""
+        eid = event.event_id
+        if eid not in self._signature_cache:
+            self._signature_cache[eid] = event.get_tool_signature()
+        return self._signature_cache[eid]
 
     def detect_all(self) -> list[PatternResult]:
         """Run all pattern detectors and return results."""
@@ -125,12 +135,16 @@ class PatternDetector:
 
     def detect_loops(self, threshold: int | None = None) -> list[PatternResult]:
         """Detect infinite loops where the same tool+input is repeated consecutively."""
-        results = []
         config = get_config()
         threshold = threshold or config.loop_threshold
+        if threshold in self._loops_cache:
+            return self._loops_cache[threshold]
+
+        results = []
         tool_calls = self.trace.get_tool_calls()
 
         if len(tool_calls) < threshold:
+            self._loops_cache[threshold] = results
             return results
 
         consecutive_count = 1
@@ -138,7 +152,7 @@ class PatternDetector:
         sequence_events: list[TraceEvent] = []
 
         for event in tool_calls:
-            sig = event.get_tool_signature()
+            sig = self._signature(event)
 
             if sig == last_sig and sig is not None:
                 consecutive_count += 1
@@ -173,6 +187,7 @@ class PatternDetector:
                 )
             )
 
+        self._loops_cache[threshold] = results
         return results
 
     def detect_retry_storms(self, threshold: int = 3) -> list[PatternResult]:
@@ -201,54 +216,82 @@ class PatternDetector:
             # must fall within the window of the last event already in the
             # cluster (not of the cluster head). A chain of calls spaced just
             # inside the window would otherwise be split into sub-threshold
-            # clusters and missed entirely.
-            i = 0
-            while i < len(events):
-                cluster = [events[i]]
-                cluster_ids = [events[i].event_id]
-                last_index = i
-                j = i + 1
-                while j < len(events):
-                    try:
-                        if events[last_index].timestamp and events[j].timestamp:
-                            delta = events[j].timestamp - events[last_index].timestamp
-                            within_window = delta <= window
-                        else:
-                            within_window = events[j].event_id - events[last_index].event_id <= 10
-                    except TypeError:
-                        # Mixed naive/aware timestamps: fall back to ID spacing.
-                        within_window = events[j].event_id - events[last_index].event_id <= 10
-                    if not within_window:
-                        break
-                    cluster.append(events[j])
-                    cluster_ids.append(events[j].event_id)
-                    last_index = j
-                    j += 1
+            # clusters and missed entirely. Maintained incrementally as a
+            # two-pointer deque so rejected heads slide without rebuilding
+            # the chain (each event enters and leaves the cluster once).
+            n = len(events)
 
-                if len(cluster) >= threshold:
-                    inputs = [str(e.input) for e in cluster]
-                    unique_inputs = len(set(inputs))
-                    if unique_inputs <= len(cluster) // 2 + 1:
-                        if not any(eid in loop_ids for eid in cluster_ids):
-                            if self._has_failure_evidence(cluster):
-                                results.append(
-                                    PatternResult(
-                                        pattern_type=PatternType.RETRY_STORM,
-                                        severity=Severity.HIGH,
-                                        message=f"Tool '{tool_name}' called {len(cluster)} times within {config.retry_window_seconds}s",
-                                        evidence=f"Multiple calls with similar inputs ({unique_inputs} unique inputs)",
-                                        event_ids=cluster_ids,
-                                        metadata={
-                                            "tool_name": tool_name,
-                                            "count": len(cluster),
-                                            "unique_inputs": unique_inputs,
-                                            "window_seconds": config.retry_window_seconds,
-                                        },
-                                    )
-                                )
-                        i = i + len(cluster) - 1
+            def chains(candidate: TraceEvent, last: TraceEvent | None) -> bool:
+                if last is None:
+                    return True
+                try:
+                    if candidate.timestamp and last.timestamp:
+                        delta = candidate.timestamp - last.timestamp
+                        # Descending timestamps are exporter disorder, not
+                        # retries; only forward motion may chain.
+                        return timedelta(0) <= delta <= window
+                    return candidate.event_id - last.event_id <= 10
+                except TypeError:
+                    # Mixed naive/aware timestamps: fall back to ID spacing.
+                    return candidate.event_id - last.event_id <= 10
+
+            head = 0
+            tail = 0
+            window_events: deque[TraceEvent] = deque()
+            input_counts: Counter[str] = Counter()
+
+            def extend_to_end() -> None:
+                nonlocal tail
+                while tail < n:
+                    if not chains(events[tail], window_events[-1] if window_events else None):
                         break
-                i += 1
+                    window_events.append(events[tail])
+                    input_counts[str(events[tail].input)] += 1
+                    tail += 1
+
+            while head < n:
+                if not window_events:
+                    window_events.append(events[head])
+                    input_counts[str(events[head].input)] += 1
+                    tail = max(tail, head + 1)
+                extend_to_end()
+
+                if len(window_events) >= threshold:
+                    unique_inputs = len(input_counts)
+                    cluster_ids = [e.event_id for e in window_events]
+                    if (
+                        unique_inputs <= len(window_events) // 2 + 1
+                        and not any(eid in loop_ids for eid in cluster_ids)
+                        and self._has_failure_evidence(list(window_events))
+                    ):
+                        results.append(
+                            PatternResult(
+                                pattern_type=PatternType.RETRY_STORM,
+                                severity=Severity.HIGH,
+                                message=f"Tool '{tool_name}' called {len(window_events)} times within {config.retry_window_seconds}s",
+                                evidence=f"Multiple calls with similar inputs ({unique_inputs} unique inputs)",
+                                event_ids=cluster_ids,
+                                metadata={
+                                    "tool_name": tool_name,
+                                    "count": len(window_events),
+                                    "unique_inputs": unique_inputs,
+                                    "window_seconds": config.retry_window_seconds,
+                                },
+                            )
+                        )
+                        # Consume the whole reported run; nothing inside it
+                        # can open a second storm.
+                        head = tail
+                        window_events.clear()
+                        input_counts.clear()
+                        continue
+
+                evicted = events[head]
+                window_events.popleft()
+                input_counts[str(evicted.input)] -= 1
+                if input_counts[str(evicted.input)] == 0:
+                    del input_counts[str(evicted.input)]
+                head += 1
 
         return results
 
@@ -258,7 +301,7 @@ class PatternDetector:
         calls_by_signature: dict[str, list[TraceEvent]] = {}
 
         for event in self.trace.get_tool_calls():
-            sig = event.get_tool_signature()
+            sig = self._signature(event)
             if sig:
                 calls_by_signature.setdefault(sig, []).append(event)
 
@@ -385,9 +428,9 @@ class PatternDetector:
                     pattern_type=PatternType.HALLUCINATED_TOOL,
                     severity=Severity.HIGH,
                     message=f"Found {len(hallucinated)} calls to unknown tools",
-                    evidence=f"Tool called not in available tools: {available_tools}",
+                    evidence=f"Tool called not in available tools: {sorted(available_tools)}",
                     event_ids=hallucinated,
-                    metadata={"available_tools": list(available_tools)},
+                    metadata={"available_tools": sorted(available_tools)},
                 )
             )
 
@@ -395,7 +438,7 @@ class PatternDetector:
 
     def detect_auth_permission_failures(self) -> list[PatternResult]:
         """Detect repeated auth/permission failures that should trigger escalation."""
-        matches: list[int] = []
+        matched_events: list[TraceEvent] = []
         for event in self.trace.events:
             text_parts = []
             if event.error and event.error.message:
@@ -406,16 +449,18 @@ class PatternDetector:
                 text_parts.append(str(event.input))
             combined = " ".join(text_parts)
             if self._AUTH_PERMISSION_RE.search(combined) or self._AUTH_STATUS_CODE_RE.search(combined):
-                matches.append(event.event_id)
+                matched_events.append(event)
 
-        if len(matches) >= 2:
+        # Auth language inside prompt/output prose on an otherwise healthy
+        # run is discussion, not failure evidence.
+        if len(matched_events) >= 2 and self._has_failure_evidence(matched_events):
             return [
                 PatternResult(
                     pattern_type=PatternType.AUTH_PERMISSION_FAILURE,
                     severity=Severity.HIGH,
-                    message=f"Detected repeated authentication/permission failures ({len(matches)} events)",
+                    message=f"Detected repeated authentication/permission failures ({len(matched_events)} events)",
                     evidence="Auth/permission-related error signatures were repeated",
-                    event_ids=matches,
+                    event_ids=[e.event_id for e in matched_events],
                 )
             ]
         return []
@@ -523,7 +568,7 @@ class PatternDetector:
         results: list[PatternResult] = []
         signatures: dict[str, list[TraceEvent]] = {}
         for event in self.trace.get_tool_calls():
-            sig = event.get_tool_signature()
+            sig = self._signature(event)
             if sig:
                 signatures.setdefault(sig, []).append(event)
 
@@ -551,9 +596,16 @@ class PatternDetector:
         if total_llm_tokens < 1500:
             return []
 
+        # Neighbor lookup via id map: get_events_in_range scans every event
+        # per LLM call, which is quadratic on long traces.
+        by_id = {e.event_id: e for e in self.trace.events}
         useful_tokens = 0
         for event in llm_events:
-            nearby = self.trace.get_events_in_range(max(0, event.event_id - 2), event.event_id + 2)
+            nearby = [
+                by_id[i]
+                for i in range(max(0, event.event_id - 2), event.event_id + 3)
+                if i != event.event_id and i in by_id
+            ]
             has_useful_transition = any(
                 e.type in [EventType.TOOL_CALL, EventType.ERROR, EventType.DECISION]
                 for e in nearby

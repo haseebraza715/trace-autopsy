@@ -25,6 +25,7 @@ class TraceStatus(str, Enum):
     TIMEOUT = "timeout"
     LOOP_DETECTED = "loop_detected"
     CANCELLED = "cancelled"
+    UNKNOWN = "unknown"  # missing, in-progress or unrecognised: not a verified completion
 
 
 class EventType(str, Enum):
@@ -243,10 +244,10 @@ class Trace(BaseModel):
             if event.is_error():
                 stats.num_errors += 1
 
-            if event.token_count:
+            if event.token_count is not None:
                 stats.total_tokens = (stats.total_tokens or 0) + event.token_count
 
-            if event.latency_ms:
+            if event.latency_ms is not None:
                 stats.total_latency_ms = (stats.total_latency_ms or 0) + event.latency_ms
 
         return stats

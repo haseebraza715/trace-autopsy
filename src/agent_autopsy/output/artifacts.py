@@ -14,6 +14,7 @@ from typing import Any
 
 from agent_autopsy.preanalysis import PreAnalysisBundle
 from agent_autopsy.schema import Trace
+from agent_autopsy.utils.atomic import aliases_source, atomic_write_text
 
 
 @dataclass
@@ -598,20 +599,16 @@ class ToolValidator:
 #     pass
 '''
 
-    def save_all(self, output_dir: Path) -> list[Path]:
-        """Save all artifacts to the output directory."""
+    def save_all(self, output_dir: Path, source_path: Path | None = None) -> list[Path]:
+        """Save all artifacts to the output directory.
+
+        Every file is written atomically. When ``source_path`` is given, the
+        whole set is refused before anything is written if any artifact path
+        would overwrite the input trace.
+        """
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
 
         artifacts = self.generate_all()
-        saved_paths = []
-
-        for artifact in artifacts:
-            path = output_dir / artifact.name
-            path.write_text(artifact.content)
-            saved_paths.append(path)
-
-        # Save manifest
         manifest = {
             "artifacts": [
                 {
@@ -622,8 +619,15 @@ class ToolValidator:
                 for a in artifacts
             ]
         }
-        manifest_path = output_dir / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest, indent=2))
-        saved_paths.append(manifest_path)
+        planned = [(output_dir / a.name, a.content) for a in artifacts]
+        planned.append((output_dir / "manifest.json", json.dumps(manifest, indent=2)))
 
-        return saved_paths
+        for path, _ in planned:
+            if aliases_source(path, source_path):
+                raise ValueError(f"Artifact {path.name} must not overwrite the input trace")
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for path, content in planned:
+            atomic_write_text(path, content)
+
+        return [path for path, _ in planned]

@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 from agent_autopsy.analysis.agent import AnalysisResult, run_analysis_without_llm
 from agent_autopsy.analysis.llm_cache import load_cached, save_cached
+from agent_autopsy.errors import ParseError
 from agent_autopsy.ingestion import TraceNormalizer, parse_trace_file
 from agent_autopsy.ingestion.parser import parse_trace_data
 from agent_autopsy.output import ReportGenerator
@@ -71,13 +72,21 @@ def apply_embedding_defaults_for_trace(trace: Trace) -> None:
 def load_trace(path: str | Path) -> Trace:
     """Parse and normalize a trace from disk."""
     trace = parse_trace_file(path)
-    return TraceNormalizer.normalize(trace)
+    return _require_events(TraceNormalizer.normalize(trace))
 
 
 def load_trace_from_dict(data: dict[str, Any]) -> Trace:
     """Parse and normalize a trace from an already-loaded JSON object."""
     trace = parse_trace_data(data)
-    return TraceNormalizer.normalize(trace)
+    return _require_events(TraceNormalizer.normalize(trace))
+
+
+def _require_events(trace: Trace) -> Trace:
+    """Reject event-less traces: a run with no events cannot be analyzed,
+    and reporting it as a healthy empty run would read as a clean pass."""
+    if not trace.events:
+        raise ParseError(f"Trace contains no events ({trace.run_id}); nothing to analyze")
+    return trace
 
 
 def run_preanalysis(trace: Trace) -> PreAnalysisBundle:
@@ -127,6 +136,7 @@ def stream_llm_analysis_text(
     model: str | None = None,
     verbose: bool = False,
     enable_tracing: bool | None = None,
+    use_cache: bool = True,
 ) -> Iterator[str]:
     """
     Stream LLM / graph output as text chunks for UIs (e.g. ``st.write_stream``).
@@ -134,6 +144,14 @@ def stream_llm_analysis_text(
     When the iterator completes, ``result_holder['result']`` contains the final
     :class:`AnalysisResult` (unless the outer caller interrupted before completion).
     """
+    if use_cache:
+        cfg = get_config()
+        cached = load_cached(trace, model or cfg.default_model)
+        if cached is not None and cached.success and cached.report:
+            result_holder["result"] = cached
+            yield cached.report
+            return
+
     from agent_autopsy.analysis.llm_agent import run_analysis_stream as _stream
 
     yield from _stream(

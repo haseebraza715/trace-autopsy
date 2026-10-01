@@ -1,9 +1,35 @@
 """Tests for analysis-agent quality validation helpers."""
 
+from datetime import datetime
+
+import pytest
 from langchain_core.messages import AIMessageChunk
 
 from agent_autopsy.analysis.agent import ReportQualityValidator
 from agent_autopsy.analysis.llm_agent import AnalysisAgent
+from agent_autopsy.schema import EnvironmentInfo, EventType, Trace, TraceEvent, TraceStatus
+
+
+@pytest.fixture
+def minimal_trace():
+    start = datetime(2026, 1, 1)
+    trace = Trace(
+        run_id="wiring-test",
+        timestamp_start=start,
+        status=TraceStatus.FAILED,
+        env=EnvironmentInfo(agent_framework="test"),
+        events=[
+            TraceEvent(
+                event_id=0,
+                type=EventType.LLM_CALL,
+                name="gpt-4",
+                input={"prompt": "hi"},
+                output={"text": "hello"},
+            )
+        ],
+    )
+    trace.stats = trace.calculate_stats()
+    return trace
 
 
 class TestReportQualityValidator:
@@ -71,3 +97,49 @@ class TestAnalysisAgentStreamHelpers:
         out = AnalysisAgent._stream_chat_to_message(dummy, _Runnable(), [], node_name="test")
         text = out.content if isinstance(out.content, str) else str(out.content)
         assert "Hello" in text
+
+
+class TestProviderModelWiring:
+    """init_chat_model must receive the bare model slug when model_provider
+    is explicit; a prefixed string reaches the wire verbatim and 400s."""
+
+    def _capture(self, monkeypatch):
+        captured = {}
+
+        def fake_init(model, **kwargs):
+            captured["model"] = model
+            captured["kwargs"] = kwargs
+            return object()
+
+        monkeypatch.setattr("langchain.chat_models.init_chat_model", fake_init)
+        return captured
+
+    def _agent(self, trace, provider, api_key="test-key"):
+        from agent_autopsy.utils.config import Config, set_config
+
+        set_config(Config(llm_provider=provider, openrouter_api_key=api_key))
+        try:
+            return AnalysisAgent(trace, model="stealth/ox-alpha")
+        except Exception:
+            return None
+
+    def test_openrouter_gets_bare_slug(self, monkeypatch, minimal_trace):
+        captured = self._capture(monkeypatch)
+        self._agent(minimal_trace, "openrouter")
+        assert captured["model"] == "stealth/ox-alpha"
+        assert captured["kwargs"]["base_url"] is not None
+
+    def test_openai_provider_gets_bare_slug(self, monkeypatch, minimal_trace):
+        captured = self._capture(monkeypatch)
+        self._agent(minimal_trace, "openai")
+        assert captured["model"] == "stealth/ox-alpha"
+
+    def test_anthropic_keeps_prefixed_model(self, monkeypatch, minimal_trace):
+        captured = self._capture(monkeypatch)
+        self._agent(minimal_trace, "anthropic")
+        assert captured["model"] == "anthropic:stealth/ox-alpha"
+
+    def test_ollama_keeps_prefixed_model(self, monkeypatch, minimal_trace):
+        captured = self._capture(monkeypatch)
+        self._agent(minimal_trace, "ollama")
+        assert captured["model"] == "ollama:stealth/ox-alpha"
